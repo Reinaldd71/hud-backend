@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>HUD DIAGNÓSTICO</title>
+    <title>TRANSLATOR HUD - V2 FINAL</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
         body { background: #000; color: #fff; font-family: 'Segoe UI', sans-serif; height: 100vh; display: flex; flex-direction: column; padding: 10px; }
@@ -13,11 +13,9 @@
         .btn-stop { background: #dc3545; color: white; display: none; }
         .btn-clear { background: #444; color: white; flex: 0 0 80px; }
         #hud-container { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; border: 1px solid #222; border-radius: 6px; padding: 10px; background: #050505; overflow: hidden; }
-        #translation-list { list-style: none; display: flex; flex-direction: column; gap: 8px; width: 100%; }
-        .translation-item { font-size: 20px; font-weight: bold; color: #00ffcc; text-shadow: 0 0 8px rgba(0,255,204,0.4); border-left: 4px solid #00ffcc; padding-left: 10px; font-family: 'Impact', sans-serif; word-wrap: break-word; }
-        .status-step { color: #aaa; border-left: 3px solid #666; padding-left: 8px; font-size: 13px; font-family: monospace; }
-        .status-active { color: #ffcc00; border-left-color: #ffcc00; font-weight: bold; }
-        .status-error { color: #ff4444; border-left-color: #ff4444; font-weight: bold; font-size: 14px; }
+        #translation-list { list-style: none; display: flex; flex-direction: column; gap: 10px; width: 100%; }
+        .translation-item { font-size: 22px; font-weight: bold; color: #00ffcc; text-shadow: 0 0 8px rgba(0,255,204,0.4); border-left: 4px solid #00ffcc; padding-left: 10px; font-family: 'Impact', sans-serif; word-wrap: break-word; }
+        .status-item { color: #666; border-left-color: #333; font-size: 13px; font-weight: normal; font-family: sans-serif; }
     </style>
 </head>
 <body>
@@ -30,7 +28,7 @@
 
     <div id="hud-container">
         <ul id="translation-list">
-            <li class="translation-item status-step">PRONTO PARA DIAGNÓSTICO. CLIQUE EM INICIAR.</li>
+            <li class="translation-item status-item">OUVINDE PRONTO. CLIQUE EM INICIAR.</li>
         </ul>
     </div>
 
@@ -55,7 +53,7 @@
                 socket.onopen = async () => {
                     document.getElementById('btn-start').style.display = 'none';
                     document.getElementById('btn-stop').style.display = 'block';
-                    logStep("🌐 CONECTADO AO WEBSOCKET DO RENDER", "active");
+                    adicionarStatus("OUVINDO EM TEMPO REAL...");
                     isListening = true;
 
                     audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -78,7 +76,6 @@
                         if (audioChunks.length > 0 && isListening) {
                             const blob = new Blob(audioChunks, { type: 'audio/webm' });
                             audioChunks = [];
-                            logStep(`📤 ENVIANDO ÁUDIO (${Math.round(blob.size / 1024)} KB)...`, "active");
                             
                             const reader = new FileReader();
                             reader.readAsDataURL(blob);
@@ -86,8 +83,6 @@
                                 const base64Audio = reader.result.split(',')[1];
                                 if (socket && socket.readyState === WebSocket.OPEN) {
                                     socket.send(JSON.stringify({ type: 'audio_chunk', audio: base64Audio }));
-                                } else {
-                                    logStep("❌ ERRO: WebSocket fechado antes de enviar!", "error");
                                 }
                             };
                         }
@@ -98,17 +93,13 @@
 
                 socket.onmessage = (event) => {
                     const data = JSON.parse(event.data);
-                    if (data.type === 'step') {
-                        logStep(data.text);
-                    } else if (data.type === 'translation') {
+                    if (data.type === 'translation') {
                         adicionarTraducao(data.text);
-                    } else if (data.type === 'error') {
-                        logStep("❌ " + data.text, "error");
                     }
                 };
 
             } catch (err) {
-                logStep("❌ ERRO AO ABRIR MICROFONE: " + err.message, "error");
+                adicionarStatus("ERRO AO ABRIR MICROFONE: " + err.message);
             }
         }
 
@@ -126,7 +117,6 @@
             if (average > 10) { 
                 if (!speaking) {
                     speaking = true;
-                    logStep("🎤 FALANDO DETECTADO (GRAVANDO...)", "active");
                     if (mediaRecorder.state === 'inactive') {
                         audioChunks = [];
                         mediaRecorder.start();
@@ -136,7 +126,6 @@
                 silenceTimer = setTimeout(() => {
                     if (speaking) {
                         speaking = false;
-                        logStep("⏹ PAUSA DETECTADA (FECHANDO BLOCO)...");
                         if (mediaRecorder.state === 'recording') {
                             mediaRecorder.stop();
                         }
@@ -155,22 +144,25 @@
 
             document.getElementById('btn-start').style.display = 'block';
             document.getElementById('btn-stop').style.display = 'none';
-            logStep("OUVINDO DESATIVADO.");
+            adicionarStatus("OUVINDO DESATIVADO.");
         }
 
         function adicionarTraducao(texto) {
             const list = document.getElementById('translation-list');
+            if (list.children[0] && list.children[0].classList.contains('status-item')) {
+                list.innerHTML = "";
+            }
             const li = document.createElement('li');
             li.className = 'translation-item';
-            li.innerText = "🇧🇷 " + texto;
+            li.innerText = texto;
             list.appendChild(li);
             rolarHUD();
         }
 
-        function logStep(msg, tipo = "step") {
+        function adicionarStatus(msg) {
             const list = document.getElementById('translation-list');
             const li = document.createElement('li');
-            li.className = `status-${tipo}`;
+            li.className = 'translation-item status-item';
             li.innerText = msg;
             list.appendChild(li);
             rolarHUD();
