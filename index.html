@@ -150,13 +150,18 @@ button {
 
     color: #00ffcc;
 
-    text-shadow: 0 0 8px rgba(0,255,204,0.4);
+    text-shadow:
+        0 0 8px rgba(0,255,204,0.4);
 
-    border-left: 4px solid #00ffcc;
+    border-left:
+        4px solid #00ffcc;
 
     padding-left: 10px;
 
-    font-family: 'Impact', sans-serif;
+    font-family:
+        'Impact',
+        'Arial Black',
+        sans-serif;
 
     word-wrap: break-word;
 
@@ -187,6 +192,7 @@ button {
 
 <div id="top-bar">
 
+
 <button
     id="btn-start"
     class="btn-start"
@@ -211,6 +217,7 @@ button {
 >
 LIMPAR
 </button>
+
 
 </div>
 
@@ -238,7 +245,15 @@ CONFIGURAÇÃO
 */
 
 
-const TAMANHO_BLOCO_MS = 1000;
+const TAMANHO_BLOCO_MS = 1500;
+
+
+/*
+Quanto tempo podemos esperar por um bloco
+atrasado antes de liberar os próximos.
+*/
+
+const TEMPO_MAXIMO_ESPERA = 800;
 
 
 /*
@@ -260,23 +275,29 @@ let globalStream = null;
 
 let isListening = false;
 
-let sequence = 0;
+
+/*
+IMPORTANTE:
+
+Começamos em 1.
+*/
+
+let sequence = 1;
 
 
 /*
-Fila de respostas.
-
-Serve apenas para garantir que uma tradução
-não apareça antes de outra.
+Controle das respostas recebidas
 */
 
 let respostasPendentes = new Map();
+
+let timersSequencia = new Map();
 
 let proximaSequencia = 1;
 
 
 /*
-Buffer de áudio PCM
+Buffer de áudio
 */
 
 let audioBuffer = [];
@@ -286,7 +307,7 @@ let sampleRate = 44100;
 
 /*
 =========================================================
-INICIAR
+INICIAR OUVINTE
 =========================================================
 */
 
@@ -309,19 +330,20 @@ async function iniciarOuvinte() {
         */
 
         globalStream =
-            await navigator.mediaDevices.getUserMedia({
+            await navigator.mediaDevices
+                .getUserMedia({
 
-                audio: {
+                    audio: {
 
-                    echoCancellation: false,
+                        echoCancellation: false,
 
-                    noiseSuppression: false,
+                        noiseSuppression: false,
 
-                    autoGainControl: true
+                        autoGainControl: true
 
-                }
+                    }
 
-            });
+                });
 
 
         adicionarStatus(
@@ -350,11 +372,23 @@ async function iniciarOuvinte() {
 
             isListening = true;
 
-            sequence = 0;
+
+            /*
+            Reinicia a sequência corretamente
+            */
+
+            sequence = 1;
 
             proximaSequencia = 1;
 
+
             respostasPendentes.clear();
+
+            timersSequencia.forEach(
+                timer => clearTimeout(timer)
+            );
+
+            timersSequencia.clear();
 
 
             document
@@ -365,6 +399,9 @@ async function iniciarOuvinte() {
             document
                 .getElementById('btn-stop')
                 .style.display = 'block';
+
+
+            limparHUD();
 
 
             adicionarStatus(
@@ -384,7 +421,8 @@ async function iniciarOuvinte() {
 
 
             if (
-                audioContext.state === 'suspended'
+                audioContext.state ===
+                'suspended'
             ) {
 
                 await audioContext.resume();
@@ -397,30 +435,33 @@ async function iniciarOuvinte() {
 
 
             /*
-            Entrada do microfone
+            Microfone
             */
 
             microphone =
-                audioContext.createMediaStreamSource(
-                    globalStream
-                );
+                audioContext
+                    .createMediaStreamSource(
+                        globalStream
+                    );
 
 
             /*
-            ScriptProcessor é utilizado aqui
-            para manter o protótipo simples
-            e compatível com o navegador móvel.
+            Captura contínua
             */
 
             processor =
-                audioContext.createScriptProcessor(
-                    4096,
-                    1,
-                    1
-                );
+                audioContext
+                    .createScriptProcessor(
+                        4096,
+                        1,
+                        1
+                    );
 
 
-            microphone.connect(processor);
+            microphone.connect(
+                processor
+            );
+
 
             processor.connect(
                 audioContext.destination
@@ -431,19 +472,16 @@ async function iniciarOuvinte() {
                 capturarAudio;
 
 
-            adicionarStatus(
-                "TRADUÇÃO ATIVA."
-            );
-
         };
 
 
         /*
-        Recebe respostas do servidor
+        =================================================
+        RECEBIMENTO DAS RESPOSTAS
+        =================================================
         */
 
         socket.onmessage = (event) => {
-
 
             try {
 
@@ -452,16 +490,40 @@ async function iniciarOuvinte() {
 
 
                 if (
-                    data.type === 'translation'
+                    data.type ===
+                    'translation'
                 ) {
 
-                    respostasPendentes.set(
+                    receberResposta(
                         data.sequence,
                         data.text
                     );
 
+                }
 
-                    processarFila();
+
+                if (
+                    data.type ===
+                    'empty'
+                ) {
+
+                    receberResposta(
+                        data.sequence,
+                        ''
+                    );
+
+                }
+
+
+                if (
+                    data.type ===
+                    'error'
+                ) {
+
+                    receberResposta(
+                        data.sequence,
+                        ''
+                    );
 
                 }
 
@@ -469,7 +531,7 @@ async function iniciarOuvinte() {
             } catch (error) {
 
                 console.error(
-                    "Erro recebendo tradução:",
+                    'Erro recebendo resposta:',
                     error
                 );
 
@@ -502,14 +564,12 @@ async function iniciarOuvinte() {
 
     } catch (error) {
 
-
         console.error(error);
 
 
         adicionarStatus(
             "ERRO: " + error.message
         );
-
 
     }
 
@@ -527,18 +587,16 @@ function capturarAudio(event) {
 
 
     if (!isListening) {
+
         return;
+
     }
 
 
     const input =
-        event.inputBuffer.getChannelData(0);
+        event.inputBuffer
+            .getChannelData(0);
 
-
-    /*
-    Copia o áudio para não depender
-    do buffer interno do navegador.
-    */
 
     for (
         let i = 0;
@@ -546,19 +604,18 @@ function capturarAudio(event) {
         i++
     ) {
 
-        audioBuffer.push(input[i]);
+        audioBuffer.push(
+            input[i]
+        );
 
     }
 
 
-    /*
-    Quando atingir aproximadamente
-    1 segundo, envia o bloco.
-    */
-
     const quantidadeNecessaria =
-        sampleRate *
-        (TAMANHO_BLOCO_MS / 1000);
+        Math.floor(
+            sampleRate *
+            (TAMANHO_BLOCO_MS / 1000)
+        );
 
 
     if (
@@ -574,9 +631,16 @@ function capturarAudio(event) {
             );
 
 
+        const numeroAtual =
+            sequence;
+
+
+        sequence++;
+
+
         enviarBloco(
             bloco,
-            sequence++
+            numeroAtual
         );
 
     }
@@ -586,7 +650,7 @@ function capturarAudio(event) {
 
 /*
 =========================================================
-CONVERTE PCM PARA WAV
+CRIAR WAV
 =========================================================
 */
 
@@ -599,7 +663,8 @@ function criarWav(
 
     const buffer =
         new ArrayBuffer(
-            44 + samples.length * 2
+            44 +
+            samples.length * 2
         );
 
 
@@ -746,6 +811,13 @@ function criarWav(
 }
 
 
+/*
+=========================================================
+ESCREVER TEXTO WAV
+=========================================================
+*/
+
+
 function escreverTexto(
     view,
     offset,
@@ -771,12 +843,12 @@ function escreverTexto(
 
 /*
 =========================================================
-ENVIA BLOCO
+ENVIAR BLOCO
 =========================================================
 */
 
 
-async function enviarBloco(
+function enviarBloco(
     samples,
     numero
 ) {
@@ -812,6 +884,40 @@ async function enviarBloco(
                 .split(',')[1];
 
 
+        /*
+        Cria um temporizador.
+
+        Se esse bloco não responder
+        rapidamente, a fila não fica presa.
+        */
+
+        const timer =
+            setTimeout(
+                () => {
+
+                    if (
+                        !respostasPendentes
+                            .has(numero)
+                    ) {
+
+                        respostasPendentes
+                            .set(numero, '');
+
+                        processarFila();
+
+                    }
+
+                },
+                TEMPO_MAXIMO_ESPERA
+            );
+
+
+        timersSequencia.set(
+            numero,
+            timer
+        );
+
+
         socket.send(
             JSON.stringify({
 
@@ -834,7 +940,61 @@ async function enviarBloco(
 
 /*
 =========================================================
-FILA DE TRADUÇÃO
+RECEBER RESPOSTA
+=========================================================
+*/
+
+
+function receberResposta(
+    numero,
+    texto
+) {
+
+
+    /*
+    Se já liberamos essa sequência
+    por timeout, não fazemos nada.
+    */
+
+    if (
+        numero <
+        proximaSequencia
+    ) {
+
+        return;
+
+    }
+
+
+    if (
+        timersSequencia.has(numero)
+    ) {
+
+        clearTimeout(
+            timersSequencia.get(numero)
+        );
+
+        timersSequencia.delete(
+            numero
+        );
+
+    }
+
+
+    respostasPendentes.set(
+        numero,
+        texto || ''
+    );
+
+
+    processarFila();
+
+}
+
+
+/*
+=========================================================
+PROCESSAR FILA
 =========================================================
 */
 
@@ -881,7 +1041,7 @@ function processarFila() {
 
 /*
 =========================================================
-HUD
+ADICIONAR TRADUÇÃO
 =========================================================
 */
 
@@ -897,20 +1057,29 @@ function adicionarTraducao(
         );
 
 
-    if (
-        list.children[0] &&
+    /*
+    Remove mensagens de status
+    quando chega a primeira tradução.
+    */
+
+    while (
+        list.children.length > 0 &&
         list.children[0]
             .classList
             .contains('status-item')
     ) {
 
-        list.innerHTML = "";
+        list.removeChild(
+            list.children[0]
+        );
 
     }
 
 
     const li =
-        document.createElement('li');
+        document.createElement(
+            'li'
+        );
 
 
     li.className =
@@ -921,12 +1090,21 @@ function adicionarTraducao(
         texto;
 
 
-    list.appendChild(li);
+    list.appendChild(
+        li
+    );
 
 
     limitarHUD();
 
 }
+
+
+/*
+=========================================================
+STATUS
+=========================================================
+*/
 
 
 function adicionarStatus(
@@ -941,7 +1119,9 @@ function adicionarStatus(
 
 
     const li =
-        document.createElement('li');
+        document.createElement(
+            'li'
+        );
 
 
     li.className =
@@ -952,12 +1132,21 @@ function adicionarStatus(
         texto;
 
 
-    list.appendChild(li);
+    list.appendChild(
+        li
+    );
 
 
     limitarHUD();
 
 }
+
+
+/*
+=========================================================
+LIMITAR HUD
+=========================================================
+*/
 
 
 function limitarHUD() {
@@ -1053,6 +1242,15 @@ function pararOuvinte() {
 
     }
 
+
+    timersSequencia.forEach(
+        timer => clearTimeout(timer)
+    );
+
+
+    timersSequencia.clear();
+
+    respostasPendentes.clear();
 
     audioBuffer = [];
 
