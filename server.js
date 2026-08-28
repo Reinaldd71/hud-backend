@@ -4,6 +4,7 @@ import http from 'http';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import OpenAI from 'openai';
 
 dotenv.config();
 
@@ -14,6 +15,8 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
 app.use(express.static(__dirname));
 
 app.get('/', (req, res) => {
@@ -21,87 +24,38 @@ app.get('/', (req, res) => {
 });
 
 wss.on('connection', (ws) => {
-  console.log('Cliente celular conectado!');
+  console.log('Celular conectado ao servidor!');
 
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    ws.send(JSON.stringify({ type: 'text_chunk', text: ' [ERRO: Adicione OPENAI_API_KEY no Render] ' }));
-    return;
-  }
-
-  // Conexão com o modelo Realtime da OpenAI
-  const url = "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01";
-  const openAiWs = new WebSocket(url, {
-    headers: {
-      "Authorization": "Bearer " + apiKey,
-      "OpenAI-Beta": "realtime=v1",
-    },
-  });
-
-  openAiWs.on('open', () => {
-    console.log('Sessão OpenAI iniciada com sucesso!');
-    
-    // Configura os parâmetros do tradutor
-    const sessionUpdate = {
-      type: "session.update",
-      session: {
-        modalities: ["text"],
-        instructions: "Você é um tradutor simultâneo de voz para jogos online. Traduza todo o áudio em inglês recebido imediatamente para o português do Brasil. Traduza com precisão, mantendo termos de games (loot = saque, blueprint = projeto). Não gere respostas se não houver voz.",
-        input_audio_format: "pcm16",
-        turn_detection: {
-          type: "server_vad",
-          threshold: 0.4,
-          prefix_padding_ms: 300,
-          silence_duration_ms: 400
-        }
-      }
-    };
-    openAiWs.send(JSON.stringify(sessionUpdate));
-  });
-
-  ws.on('message', (message) => {
+  ws.on('message', async (message) => {
     try {
       const data = JSON.parse(message);
-      if (data.type === 'audio' && openAiWs.readyState === WebSocket.OPEN) {
-        // Envia o chunk de áudio PCM16 em Base64 recebido do microfone
-        openAiWs.send(JSON.stringify({
-          type: 'input_audio_buffer.append',
-          audio: data.audio
-        }));
+      
+      if (data.type === 'text' && data.text.trim()) {
+        const completion = await openai.chat.completions.create({
+          model: 'gpt-4o-mini',
+          temperature: 0.1,
+          messages: [
+            {
+              role: 'system',
+              content: 'Você é um tradutor simultâneo para Arc Raiders. Traduza o texto em inglês diretamente para português do Brasil. Use termos corretos de games (loot = saque, blueprint = projeto de arma, keycard = cartão de acesso). Seja direto e sem firulas.'
+            },
+            {
+              role: 'user',
+              content: data.text
+            }
+          ]
+        });
+
+        const traducao = completion.choices[0].message.content.trim();
+        ws.send(JSON.stringify({ type: 'translation', original: data.text, text: traducao }));
       }
     } catch (e) {
-      console.error("Erro ao processar pacote de áudio:", e);
+      console.error("Erro ao traduzir:", e);
     }
-  });
-
-  openAiWs.on('message', (data) => {
-    try {
-      const response = JSON.parse(data.toString());
-
-      // Captura o texto que a OpenAI gera em tempo real
-      if (response.type === 'response.audio_transcript.delta' && response.delta) {
-        ws.send(JSON.stringify({ type: 'text_chunk', text: response.delta }));
-      } else if (response.type === 'response.text.delta' && response.delta) {
-        ws.send(JSON.stringify({ type: 'text_chunk', text: response.delta }));
-      } else if (response.type === 'response.done') {
-        ws.send(JSON.stringify({ type: 'text_done' }));
-      }
-    } catch (e) {
-      console.error("Erro ao ler resposta da OpenAI:", e);
-    }
-  });
-
-  openAiWs.on('error', (err) => {
-    console.error("Erro na comunicação com a OpenAI:", err.message);
-    ws.send(JSON.stringify({ type: 'text_chunk', text: ' [Erro na API Realtime da OpenAI] ' }));
-  });
-
-  ws.on('close', () => {
-    if (openAiWs.readyState === WebSocket.OPEN) openAiWs.close();
   });
 });
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log(`Servidor ativo na porta ${PORT}`);
+  console.log(`Servidor rodando na porta ${PORT}`);
 });
