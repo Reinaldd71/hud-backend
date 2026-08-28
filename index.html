@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>TRANSLATOR HUD</title>
+    <title>TRANSLATOR HUD - V2</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
         body { background: #000; color: #fff; font-family: 'Segoe UI', sans-serif; height: 100vh; display: flex; flex-direction: column; padding: 10px; }
@@ -34,64 +34,112 @@
 
     <script>
         let socket = null;
-        let recognition = null;
+        let mediaRecorder = null;
+        let audioChunks = [];
+        let audioContext = null;
+        let analyser = null;
+        let microphone = null;
         let isListening = false;
+        let speaking = false;
+        let silenceTimer = null;
 
-        function iniciarOuvinte() {
-            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-            
-            if (!SpeechRecognition) {
-                alert("Seu navegador não suporta reconhecimento de voz em tempo real. Use o Chrome.");
-                return;
-            }
-
-            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            socket = new WebSocket(`${protocol}//${window.location.host}`);
-
-            socket.onopen = () => {
-                adicionarStatus("SERVIDO CONECTADO! ATIVANDO MICROFONE...");
+        async function iniciarOuvinte() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 
-                recognition = new SpeechRecognition();
-                recognition.continuous = true;
-                recognition.interimResults = false;
-                recognition.lang = 'en-US'; // Escuta em Inglês
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                socket = new WebSocket(`${protocol}//${window.location.host}`);
 
-                recognition.onresult = (event) => {
-                    const lastIndex = event.results.length - 1;
-                    const textoIngles = event.results[lastIndex][0].transcript;
-                    
-                    if (socket.readyState === WebSocket.OPEN) {
-                        socket.send(JSON.stringify({ type: 'text', text: textoIngles }));
+                socket.onopen = () => {
+                    document.getElementById('btn-start').style.display = 'none';
+                    document.getElementById('btn-stop').style.display = 'block';
+                    adicionarStatus("OUVINDO (DETECÇÃO DE FALA ATIVA)...");
+                    isListening = true;
+
+                    // Configura o gravador
+                    mediaRecorder = new MediaRecorder(stream);
+                    mediaRecorder.ondataavailable = (e) => {
+                        if (e.data.size > 0) audioChunks.push(e.data);
+                    };
+
+                    mediaRecorder.onstop = async () => {
+                        if (audioChunks.length > 0 && isListening) {
+                            const blob = new Blob(audioChunks, { type: 'audio/webm' });
+                            audioChunks = [];
+                            
+                            const reader = new FileReader();
+                            reader.readAsDataURL(blob);
+                            reader.onloadend = () => {
+                                const base64Audio = reader.result.split(',')[1];
+                                if (socket.readyState === WebSocket.OPEN) {
+                                    socket.send(JSON.stringify({ type: 'audio_chunk', audio: base64Audio }));
+                                }
+                            };
+                        }
+                    };
+
+                    // Configura o VAD por volume e frequência
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    analyser = audioContext.createAnalyser();
+                    microphone = audioContext.createMediaStreamSource(stream);
+                    microphone.connect(analyser);
+                    analyser.fftSize = 512;
+
+                    monitorarVoz();
+                };
+
+                socket.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'translation') {
+                        adicionarTraducao(data.text);
                     }
                 };
 
-                recognition.onerror = (e) => {
-                    console.error("Erro voz:", e);
-                };
+            } catch (err) {
+                alert("Erro ao acessar microfone.");
+            }
+        }
 
-                recognition.onend = () => {
-                    if (isListening) recognition.start(); // Reconecta automaticamente se cair
-                };
+        function monitorarVoz() {
+            if (!isListening) return;
 
-                recognition.start();
-                isListening = true;
+            const bufferLength = analyser.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
+            analyser.getByteFrequencyData(dataArray);
 
-                document.getElementById('btn-start').style.display = 'none';
-                document.getElementById('btn-stop').style.display = 'block';
-                adicionarStatus("OUVINDO INGLÊS EM TEMPO REAL...");
-            };
+            let sum = 0;
+            for (let i = 0; i < bufferLength; i++) {
+                sum += dataArray[i];
+            }
+            const average = sum / bufferLength;
 
-            socket.onmessage = (event) => {
-                const data = JSON.parse(event.data);
-                if (data.type === 'translation') {
-                    adicionarTraducao(data.text);
+            // Limiar de detecção de som (VAD)
+            if (average > 15) { 
+                if (!speaking) {
+                    speaking = true;
+                    if (mediaRecorder.state === 'inactive') {
+                        audioChunks = [];
+                        mediaRecorder.start();
+                    }
                 }
-            };
+                clearTimeout(silenceTimer);
+                silenceTimer = setTimeout(() => {
+                    if (speaking) {
+                        speaking = false;
+                        if (mediaRecorder.state === 'recording') {
+                            mediaRecorder.stop();
+                        }
+                    }
+                }, 700); // 700ms de silêncio marca a pausa natural
+            }
+
+            requestAnimationFrame(monitorarVoz);
         }
 
         function pararOuvinte() {
             isListening = false;
-            if (recognition) recognition.stop();
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+            if (audioContext) audioContext.close();
             if (socket) socket.close();
 
             document.getElementById('btn-start').style.display = 'block';
