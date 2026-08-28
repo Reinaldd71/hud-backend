@@ -12,7 +12,6 @@
 
 <title>TRANSLATOR HUD</title>
 
-
 <style>
 
 * {
@@ -148,6 +147,8 @@ button {
 
     font-weight: bold;
 
+    line-height: 1.25;
+
     color: #00ffcc;
 
     text-shadow:
@@ -192,7 +193,6 @@ button {
 
 <div id="top-bar">
 
-
 <button
     id="btn-start"
     class="btn-start"
@@ -217,7 +217,6 @@ button {
 >
 LIMPAR
 </button>
-
 
 </div>
 
@@ -245,15 +244,7 @@ CONFIGURAÇÃO
 */
 
 
-const TAMANHO_BLOCO_MS = 1500;
-
-
-/*
-Quanto tempo podemos esperar por um bloco
-atrasado antes de liberar os próximos.
-*/
-
-const TEMPO_MAXIMO_ESPERA = 800;
+const INTERVALO_GRAVACAO = 1800;
 
 
 /*
@@ -265,49 +256,18 @@ VARIÁVEIS
 
 let socket = null;
 
-let audioContext = null;
-
-let microphone = null;
-
-let processor = null;
+let mediaRecorder = null;
 
 let globalStream = null;
 
 let isListening = false;
 
-
-/*
-IMPORTANTE:
-
-Começamos em 1.
-*/
-
-let sequence = 1;
-
-
-/*
-Controle das respostas recebidas
-*/
-
-let respostasPendentes = new Map();
-
-let timersSequencia = new Map();
-
-let proximaSequencia = 1;
-
-
-/*
-Buffer de áudio
-*/
-
-let audioBuffer = [];
-
-let sampleRate = 44100;
+let gravando = false;
 
 
 /*
 =========================================================
-INICIAR OUVINTE
+INICIAR
 =========================================================
 */
 
@@ -317,16 +277,8 @@ async function iniciarOuvinte() {
     try {
 
 
-        limparHUD();
-
-
-        adicionarStatus(
-            "SOLICITANDO MICROFONE..."
-        );
-
-
         /*
-        Microfone
+        Abre o microfone
         */
 
         globalStream =
@@ -346,13 +298,8 @@ async function iniciarOuvinte() {
                 });
 
 
-        adicionarStatus(
-            "MICROFONE CONECTADO."
-        );
-
-
         /*
-        WebSocket
+        Conecta ao servidor
         */
 
         const protocol =
@@ -367,28 +314,10 @@ async function iniciarOuvinte() {
             );
 
 
-        socket.onopen = async () => {
+        socket.onopen = () => {
 
 
             isListening = true;
-
-
-            /*
-            Reinicia a sequência corretamente
-            */
-
-            sequence = 1;
-
-            proximaSequencia = 1;
-
-
-            respostasPendentes.clear();
-
-            timersSequencia.forEach(
-                timer => clearTimeout(timer)
-            );
-
-            timersSequencia.clear();
 
 
             document
@@ -405,80 +334,17 @@ async function iniciarOuvinte() {
 
 
             adicionarStatus(
-                "OUVINDO EM TEMPO REAL..."
+                'OUVINDO EM TEMPO REAL...'
             );
 
 
-            /*
-            AudioContext
-            */
-
-            audioContext =
-                new (
-                    window.AudioContext ||
-                    window.webkitAudioContext
-                )();
-
-
-            if (
-                audioContext.state ===
-                'suspended'
-            ) {
-
-                await audioContext.resume();
-
-            }
-
-
-            sampleRate =
-                audioContext.sampleRate;
-
-
-            /*
-            Microfone
-            */
-
-            microphone =
-                audioContext
-                    .createMediaStreamSource(
-                        globalStream
-                    );
-
-
-            /*
-            Captura contínua
-            */
-
-            processor =
-                audioContext
-                    .createScriptProcessor(
-                        4096,
-                        1,
-                        1
-                    );
-
-
-            microphone.connect(
-                processor
-            );
-
-
-            processor.connect(
-                audioContext.destination
-            );
-
-
-            processor.onaudioprocess =
-                capturarAudio;
-
+            iniciarGravacao();
 
         };
 
 
         /*
-        =================================================
-        RECEBIMENTO DAS RESPOSTAS
-        =================================================
+        Recebe tradução
         */
 
         socket.onmessage = (event) => {
@@ -490,12 +356,11 @@ async function iniciarOuvinte() {
 
 
                 if (
-                    data.type ===
-                    'translation'
+                    data.type === 'translation' &&
+                    data.text
                 ) {
 
-                    receberResposta(
-                        data.sequence,
+                    adicionarTraducao(
                         data.text
                     );
 
@@ -503,35 +368,18 @@ async function iniciarOuvinte() {
 
 
                 if (
-                    data.type ===
-                    'empty'
+                    data.type === 'error'
                 ) {
 
-                    receberResposta(
-                        data.sequence,
-                        ''
+                    adicionarStatus(
+                        data.text
                     );
 
                 }
-
-
-                if (
-                    data.type ===
-                    'error'
-                ) {
-
-                    receberResposta(
-                        data.sequence,
-                        ''
-                    );
-
-                }
-
 
             } catch (error) {
 
                 console.error(
-                    'Erro recebendo resposta:',
                     error
                 );
 
@@ -543,7 +391,7 @@ async function iniciarOuvinte() {
         socket.onerror = () => {
 
             adicionarStatus(
-                "ERRO NA CONEXÃO."
+                'ERRO DE CONEXÃO.'
             );
 
         };
@@ -554,7 +402,7 @@ async function iniciarOuvinte() {
             if (isListening) {
 
                 adicionarStatus(
-                    "CONEXÃO ENCERRADA."
+                    'CONEXÃO ENCERRADA.'
                 );
 
             }
@@ -564,11 +412,9 @@ async function iniciarOuvinte() {
 
     } catch (error) {
 
-        console.error(error);
-
-
         adicionarStatus(
-            "ERRO: " + error.message
+            'ERRO NO MICROFONE: ' +
+            error.message
         );
 
     }
@@ -578,234 +424,110 @@ async function iniciarOuvinte() {
 
 /*
 =========================================================
-CAPTURA CONTÍNUA
+GRAVAÇÃO EM CICLOS
 =========================================================
 */
 
 
-function capturarAudio(event) {
-
+function iniciarGravacao() {
 
     if (!isListening) {
-
         return;
-
     }
 
 
-    const input =
-        event.inputBuffer
-            .getChannelData(0);
+    const chunks = [];
 
 
-    for (
-        let i = 0;
-        i < input.length;
-        i++
-    ) {
-
-        audioBuffer.push(
-            input[i]
-        );
-
-    }
-
-
-    const quantidadeNecessaria =
-        Math.floor(
-            sampleRate *
-            (TAMANHO_BLOCO_MS / 1000)
+    mediaRecorder =
+        new MediaRecorder(
+            globalStream
         );
 
 
-    if (
-        audioBuffer.length >=
-        quantidadeNecessaria
-    ) {
+    mediaRecorder.ondataavailable =
+        (event) => {
+
+            if (
+                event.data &&
+                event.data.size > 0
+            ) {
+
+                chunks.push(
+                    event.data
+                );
+
+            }
+
+        };
 
 
-        const bloco =
-            audioBuffer.splice(
-                0,
-                quantidadeNecessaria
+    mediaRecorder.onstop = () => {
+
+
+        gravando = false;
+
+
+        if (
+            chunks.length > 0 &&
+            isListening
+        ) {
+
+            const blob =
+                new Blob(
+                    chunks,
+                    {
+                        type:
+                            'audio/webm'
+                    }
+                );
+
+
+            enviarAudio(
+                blob
             );
 
-
-        const numeroAtual =
-            sequence;
-
-
-        sequence++;
-
-
-        enviarBloco(
-            bloco,
-            numeroAtual
-        );
-
-    }
-
-}
-
-
-/*
-=========================================================
-CRIAR WAV
-=========================================================
-*/
-
-
-function criarWav(
-    samples,
-    sampleRate
-) {
-
-
-    const buffer =
-        new ArrayBuffer(
-            44 +
-            samples.length * 2
-        );
-
-
-    const view =
-        new DataView(buffer);
-
-
-    escreverTexto(
-        view,
-        0,
-        'RIFF'
-    );
-
-
-    view.setUint32(
-        4,
-        36 + samples.length * 2,
-        true
-    );
-
-
-    escreverTexto(
-        view,
-        8,
-        'WAVE'
-    );
-
-
-    escreverTexto(
-        view,
-        12,
-        'fmt '
-    );
-
-
-    view.setUint32(
-        16,
-        16,
-        true
-    );
-
-
-    view.setUint16(
-        20,
-        1,
-        true
-    );
-
-
-    view.setUint16(
-        22,
-        1,
-        true
-    );
-
-
-    view.setUint32(
-        24,
-        sampleRate,
-        true
-    );
-
-
-    view.setUint32(
-        28,
-        sampleRate * 2,
-        true
-    );
-
-
-    view.setUint16(
-        32,
-        2,
-        true
-    );
-
-
-    view.setUint16(
-        34,
-        16,
-        true
-    );
-
-
-    escreverTexto(
-        view,
-        36,
-        'data'
-    );
-
-
-    view.setUint32(
-        40,
-        samples.length * 2,
-        true
-    );
-
-
-    let offset = 44;
-
-
-    for (
-        let i = 0;
-        i < samples.length;
-        i++
-    ) {
-
-
-        let valor =
-            Math.max(
-                -1,
-                Math.min(
-                    1,
-                    samples[i]
-                )
-            );
-
-
-        valor =
-            valor < 0
-                ? valor * 0x8000
-                : valor * 0x7FFF;
-
-
-        view.setInt16(
-            offset,
-            valor,
-            true
-        );
-
-
-        offset += 2;
-
-    }
-
-
-    return new Blob(
-        [buffer],
-        {
-            type: 'audio/wav'
         }
+
+
+        /*
+        Começa imediatamente
+        o próximo ciclo.
+        */
+
+        if (isListening) {
+
+            setTimeout(
+                iniciarGravacao,
+                50
+            );
+
+        }
+
+    };
+
+
+    mediaRecorder.start();
+
+
+    gravando = true;
+
+
+    setTimeout(
+        () => {
+
+            if (
+                mediaRecorder &&
+                mediaRecorder.state ===
+                'recording'
+            ) {
+
+                mediaRecorder.stop();
+
+            }
+
+        },
+        INTERVALO_GRAVACAO
     );
 
 }
@@ -813,44 +535,13 @@ function criarWav(
 
 /*
 =========================================================
-ESCREVER TEXTO WAV
+ENVIA ÁUDIO
 =========================================================
 */
 
 
-function escreverTexto(
-    view,
-    offset,
-    texto
-) {
-
-
-    for (
-        let i = 0;
-        i < texto.length;
-        i++
-    ) {
-
-        view.setUint8(
-            offset + i,
-            texto.charCodeAt(i)
-        );
-
-    }
-
-}
-
-
-/*
-=========================================================
-ENVIAR BLOCO
-=========================================================
-*/
-
-
-function enviarBloco(
-    samples,
-    numero
+function enviarAudio(
+    blob
 ) {
 
 
@@ -865,13 +556,6 @@ function enviarBloco(
     }
 
 
-    const wav =
-        criarWav(
-            samples,
-            sampleRate
-        );
-
-
     const reader =
         new FileReader();
 
@@ -884,164 +568,33 @@ function enviarBloco(
                 .split(',')[1];
 
 
-        /*
-        Cria um temporizador.
-
-        Se esse bloco não responder
-        rapidamente, a fila não fica presa.
-        */
-
-        const timer =
-            setTimeout(
-                () => {
-
-                    if (
-                        !respostasPendentes
-                            .has(numero)
-                    ) {
-
-                        respostasPendentes
-                            .set(numero, '');
-
-                        processarFila();
-
-                    }
-
-                },
-                TEMPO_MAXIMO_ESPERA
-            );
-
-
-        timersSequencia.set(
-            numero,
-            timer
-        );
-
-
         socket.send(
+
             JSON.stringify({
 
-                type: 'audio_chunk',
+                type:
+                    'audio_chunk',
 
-                sequence: numero,
-
-                audio: base64
+                audio:
+                    base64
 
             })
+
         );
 
     };
 
 
-    reader.readAsDataURL(wav);
-
-}
-
-
-/*
-=========================================================
-RECEBER RESPOSTA
-=========================================================
-*/
-
-
-function receberResposta(
-    numero,
-    texto
-) {
-
-
-    /*
-    Se já liberamos essa sequência
-    por timeout, não fazemos nada.
-    */
-
-    if (
-        numero <
-        proximaSequencia
-    ) {
-
-        return;
-
-    }
-
-
-    if (
-        timersSequencia.has(numero)
-    ) {
-
-        clearTimeout(
-            timersSequencia.get(numero)
-        );
-
-        timersSequencia.delete(
-            numero
-        );
-
-    }
-
-
-    respostasPendentes.set(
-        numero,
-        texto || ''
+    reader.readAsDataURL(
+        blob
     );
 
-
-    processarFila();
-
 }
 
 
 /*
 =========================================================
-PROCESSAR FILA
-=========================================================
-*/
-
-
-function processarFila() {
-
-
-    while (
-        respostasPendentes.has(
-            proximaSequencia
-        )
-    ) {
-
-
-        const texto =
-            respostasPendentes.get(
-                proximaSequencia
-            );
-
-
-        respostasPendentes.delete(
-            proximaSequencia
-        );
-
-
-        if (
-            texto &&
-            texto.trim()
-        ) {
-
-            adicionarTraducao(
-                texto
-            );
-
-        }
-
-
-        proximaSequencia++;
-
-    }
-
-}
-
-
-/*
-=========================================================
-ADICIONAR TRADUÇÃO
+TRADUÇÃO NO HUD
 =========================================================
 */
 
@@ -1059,14 +612,15 @@ function adicionarTraducao(
 
     /*
     Remove mensagens de status
-    quando chega a primeira tradução.
     */
 
     while (
         list.children.length > 0 &&
         list.children[0]
             .classList
-            .contains('status-item')
+            .contains(
+                'status-item'
+            )
     ) {
 
         list.removeChild(
@@ -1144,7 +698,7 @@ function adicionarStatus(
 
 /*
 =========================================================
-LIMITAR HUD
+LIMITE DO HUD
 =========================================================
 */
 
@@ -1193,29 +747,13 @@ function pararOuvinte() {
     isListening = false;
 
 
-    if (processor) {
+    if (
+        mediaRecorder &&
+        mediaRecorder.state !==
+        'inactive'
+    ) {
 
-        processor.disconnect();
-
-        processor = null;
-
-    }
-
-
-    if (microphone) {
-
-        microphone.disconnect();
-
-        microphone = null;
-
-    }
-
-
-    if (audioContext) {
-
-        audioContext.close();
-
-        audioContext = null;
+        mediaRecorder.stop();
 
     }
 
@@ -1225,7 +763,8 @@ function pararOuvinte() {
         globalStream
             .getTracks()
             .forEach(
-                track => track.stop()
+                track =>
+                    track.stop()
             );
 
 
@@ -1243,18 +782,6 @@ function pararOuvinte() {
     }
 
 
-    timersSequencia.forEach(
-        timer => clearTimeout(timer)
-    );
-
-
-    timersSequencia.clear();
-
-    respostasPendentes.clear();
-
-    audioBuffer = [];
-
-
     document
         .getElementById('btn-start')
         .style.display = 'block';
@@ -1266,7 +793,7 @@ function pararOuvinte() {
 
 
     adicionarStatus(
-        "OUVINDO DESATIVADO."
+        'OUVINDO DESATIVADO.'
     );
 
 }
