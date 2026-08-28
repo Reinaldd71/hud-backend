@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>TRANSLATOR HUD</title>
+    <title>TRANSLATOR HUD - REALTIME</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
         body { background: #000; color: #fff; font-family: 'Segoe UI', sans-serif; height: 100vh; display: flex; flex-direction: column; padding: 10px; }
@@ -33,141 +33,102 @@
     </div>
 
     <script>
-        const SERVIDOR_URL = "https://hud-backend.vercel.app/api/processar-audio";
-
-        let mediaRecorder = null;
+        let socket = null;
+        let audioContext = null;
+        let processor = null;
         let globalStream = null;
         let isListening = false;
-        let inactivityTimer = null;
-        
-        let sequenceCounter = 0;
-        let nextToDisplay = 1;
-        const pendingResponses = new Map();
+        let currentLi = null;
 
         async function iniciarOuvinte() {
             try {
-                globalStream = await navigator.mediaDevices.getUserMedia({ 
-                    audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 16000 } 
-                });
-                isListening = true;
-                sequenceCounter = 0;
-                nextToDisplay = 1;
-                pendingResponses.clear();
+                // Detecta se é conexão segura (wss://) ou padrão (ws://)
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                socket = new WebSocket(`${protocol}//${window.location.host}`);
 
-                document.getElementById('btn-start').style.display = 'none';
-                document.getElementById('btn-stop').style.display = 'block';
-                limparHUD();
-                adicionarStatus("OUVINDO E TRADUZINDO EM TEMPO REAL...");
+                socket.onopen = async () => {
+                    adicionarStatus("CONECTADO AO SERVIDOR DE STREAMING EM TEMPO REAL.");
+                    document.getElementById('btn-start').style.display = 'none';
+                    document.getElementById('btn-stop').style.display = 'block';
+                    limparHUD();
+                    isListening = true;
 
-                gravadorLoop(globalStream);
-                resetInactivityTimer();
+                    // Captura de áudio contínua em PCM16 para a OpenAI
+                    globalStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
+                    
+                    const source = audioContext.createMediaStreamSource(globalStream);
+                    processor = audioContext.createScriptProcessor(4096, 1, 1);
+
+                    processor.onaudioprocess = (e) => {
+                        if (!isListening || socket.readyState !== WebSocket.OPEN) return;
+                        
+                        const inputData = e.inputBuffer.getChannelData(0);
+                        const pcm16 = new Int16Array(inputData.length);
+                        for (let i = 0; i < inputData.length; i++) {
+                            pcm16[i] = Math.max(-1, Math.min(1, inputData[i])) * 0x7FFF;
+                        }
+                        
+                        // Transforma o áudio em base64 e envia pelo WebSocket
+                        const base64Audio = btoa(String.fromCharCode(...new Uint8Array(pcm16.buffer)));
+                        socket.send(JSON.stringify({ type: 'audio', audio: base64Audio }));
+                    };
+
+                    source.connect(processor);
+                    processor.connect(audioContext.destination);
+                };
+
+                // Recebe as palavras sendo traduzidas em tempo real
+                socket.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    
+                    if (data.type === 'text_chunk') {
+                        if (!currentLi) {
+                            currentLi = criarElemento HUD();
+                        }
+                        currentLi.innerText += data.text;
+                        rolarHUD();
+                    } else if (data.type === 'text_done') {
+                        currentLi = null; // Finaliza a frase atual
+                    }
+                };
+
+                socket.onclose = () => {
+                    if (isListening) pararOuvinte();
+                };
 
             } catch (err) {
-                alert("Erro ao acessar microfone. Certifique-se de permitir o acesso.");
+                alert("Erro ao conectar microfone/servidor.");
             }
-        }
-
-        function gravadorLoop(stream) {
-            if (!isListening) return;
-
-            let chunks = [];
-            const options = { mimeType: 'audio/webm;codecs=opus', audioBitsPerSecond: 16000 };
-            try {
-                mediaRecorder = new MediaRecorder(stream, options);
-            } catch(e) {
-                mediaRecorder = new MediaRecorder(stream);
-            }
-            
-            sequenceCounter++;
-            const currentSeq = sequenceCounter;
-
-            mediaRecorder.ondataavailable = e => chunks.push(e.data);
-
-            mediaRecorder.onstop = () => {
-                if (chunks.length > 0) {
-                    const blob = new Blob(chunks, { type: 'audio/webm' });
-                    enviarAudio(blob, currentSeq);
-                }
-                if (isListening) gravadorLoop(stream);
-            };
-
-            mediaRecorder.start();
-            
-            // Ajustado para 2.5 segundos (captura frases completas sem picotar)
-            setTimeout(() => {
-                if (mediaRecorder && mediaRecorder.state === "recording") {
-                    mediaRecorder.stop();
-                }
-            }, 2500);
         }
 
         function pararOuvinte() {
             isListening = false;
-            if (mediaRecorder && mediaRecorder.state !== "inactive") {
-                mediaRecorder.stop();
-            }
-
-            if (globalStream) {
-                globalStream.getTracks().forEach(track => track.stop());
-                globalStream = null;
-            }
-
-            clearTimeout(inactivityTimer);
+            
+            if (processor) processor.disconnect();
+            if (audioContext) audioContext.close();
+            if (globalStream) globalStream.getTracks().forEach(t => t.stop());
+            if (socket) socket.close();
 
             document.getElementById('btn-start').style.display = 'block';
             document.getElementById('btn-stop').style.display = 'none';
             adicionarStatus("OUVINDO DESATIVADO.");
         }
 
-        function resetInactivityTimer() {
-            clearTimeout(inactivityTimer);
-            inactivityTimer = setTimeout(() => pararOuvinte(), 30 * 60 * 1000);
-        }
-
-        async function enviarAudio(blobAudio, seq) {
-            const formData = new FormData();
-            formData.append('audio', blobAudio, 'audio.webm');
-
-            try {
-                const res = await fetch(SERVIDOR_URL, { method: 'POST', body: formData });
-                const data = await res.json();
-                
-                pendingResponses.set(seq, data.traducao || "");
-                processarFila();
-
-            } catch (err) {
-                console.error("Erro no envio:", err);
-                pendingResponses.set(seq, "");
-                processarFila();
-            }
-        }
-
-        function processarFila() {
-            while (pendingResponses.has(nextToDisplay)) {
-                const traducao = pendingResponses.get(nextToDisplay);
-                pendingResponses.delete(nextToDisplay);
-
-                if (traducao && traducao.length > 0) {
-                    resetInactivityTimer();
-                    adicionarAoHUD(traducao);
-                }
-                nextToDisplay++;
-            }
-        }
-
-        function adicionarAoHUD(texto) {
-            const container = document.getElementById('hud-container');
+        function criarElementoHUD() {
             const list = document.getElementById('translation-list');
-
             if (list.children[0] && list.children[0].classList.contains('status-item')) {
                 list.innerHTML = "";
             }
-
             const li = document.createElement('li');
             li.className = 'translation-item';
-            li.innerText = texto;
             list.appendChild(li);
+            return li;
+        }
 
+        function rolarHUD() {
+            const container = document.getElementById('hud-container');
+            const list = document.getElementById('translation-list');
             while (list.offsetHeight > (container.clientHeight - 15) && list.children.length > 1) {
                 list.removeChild(list.firstChild);
             }
