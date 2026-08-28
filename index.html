@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>TRANSLATOR HUD - DEBUG</title>
+    <title>HUD DIAGNÓSTICO</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
         body { background: #000; color: #fff; font-family: 'Segoe UI', sans-serif; height: 100vh; display: flex; flex-direction: column; padding: 10px; }
@@ -13,11 +13,11 @@
         .btn-stop { background: #dc3545; color: white; display: none; }
         .btn-clear { background: #444; color: white; flex: 0 0 80px; }
         #hud-container { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; border: 1px solid #222; border-radius: 6px; padding: 10px; background: #050505; overflow: hidden; }
-        #translation-list { list-style: none; display: flex; flex-direction: column; gap: 10px; width: 100%; }
-        .translation-item { font-size: 22px; font-weight: bold; color: #00ffcc; text-shadow: 0 0 8px rgba(0,255,204,0.4); border-left: 4px solid #00ffcc; padding-left: 10px; font-family: 'Impact', sans-serif; word-wrap: break-word; }
-        .status-item { color: #888; border-left-color: #555; font-size: 14px; font-weight: normal; font-family: sans-serif; }
+        #translation-list { list-style: none; display: flex; flex-direction: column; gap: 8px; width: 100%; }
+        .translation-item { font-size: 20px; font-weight: bold; color: #00ffcc; text-shadow: 0 0 8px rgba(0,255,204,0.4); border-left: 4px solid #00ffcc; padding-left: 10px; font-family: 'Impact', sans-serif; word-wrap: break-word; }
+        .status-step { color: #aaa; border-left: 3px solid #666; padding-left: 8px; font-size: 13px; font-family: monospace; }
         .status-active { color: #ffcc00; border-left-color: #ffcc00; font-weight: bold; }
-        .status-error { color: #ff4444; border-left-color: #ff4444; font-weight: bold; font-size: 16px; }
+        .status-error { color: #ff4444; border-left-color: #ff4444; font-weight: bold; font-size: 14px; }
     </style>
 </head>
 <body>
@@ -30,7 +30,7 @@
 
     <div id="hud-container">
         <ul id="translation-list">
-            <li class="translation-item status-item">CLIQUE EM "INICIAR OUVINTE" PARA COMEÇAR...</li>
+            <li class="translation-item status-step">PRONTO PARA DIAGNÓSTICO. CLIQUE EM INICIAR.</li>
         </ul>
     </div>
 
@@ -55,7 +55,7 @@
                 socket.onopen = async () => {
                     document.getElementById('btn-start').style.display = 'none';
                     document.getElementById('btn-stop').style.display = 'block';
-                    adicionarStatus("OUVINDO... (AGUARDANDO ÁUDIO ENTRAR)");
+                    logStep("🌐 CONECTADO AO WEBSOCKET DO RENDER", "active");
                     isListening = true;
 
                     audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -69,22 +69,25 @@
                     analyser.fftSize = 512;
 
                     mediaRecorder = new MediaRecorder(stream);
+                    
                     mediaRecorder.ondataavailable = (e) => {
                         if (e.data.size > 0) audioChunks.push(e.data);
                     };
 
-                    mediaRecorder.onstop = async () => {
+                    mediaRecorder.onstop = () => {
                         if (audioChunks.length > 0 && isListening) {
-                            adicionarStatus("⏳ PROCESSANDO TRADUÇÃO...", "active");
                             const blob = new Blob(audioChunks, { type: 'audio/webm' });
                             audioChunks = [];
+                            logStep(`📤 ENVIANDO ÁUDIO (${Math.round(blob.size / 1024)} KB)...`, "active");
                             
                             const reader = new FileReader();
                             reader.readAsDataURL(blob);
                             reader.onloadend = () => {
                                 const base64Audio = reader.result.split(',')[1];
-                                if (socket.readyState === WebSocket.OPEN) {
+                                if (socket && socket.readyState === WebSocket.OPEN) {
                                     socket.send(JSON.stringify({ type: 'audio_chunk', audio: base64Audio }));
+                                } else {
+                                    logStep("❌ ERRO: WebSocket fechado antes de enviar!", "error");
                                 }
                             };
                         }
@@ -95,15 +98,17 @@
 
                 socket.onmessage = (event) => {
                     const data = JSON.parse(event.data);
-                    if (data.type === 'translation') {
+                    if (data.type === 'step') {
+                        logStep(data.text);
+                    } else if (data.type === 'translation') {
                         adicionarTraducao(data.text);
                     } else if (data.type === 'error') {
-                        adicionarStatus("❌ ERRO: " + data.text, "error");
+                        logStep("❌ " + data.text, "error");
                     }
                 };
 
             } catch (err) {
-                adicionarStatus("❌ ERRO NO MICROFONE: " + err.message, "error");
+                logStep("❌ ERRO AO ABRIR MICROFONE: " + err.message, "error");
             }
         }
 
@@ -115,15 +120,13 @@
             analyser.getByteFrequencyData(dataArray);
 
             let sum = 0;
-            for (let i = 0; i < bufferLength; i++) {
-                sum += dataArray[i];
-            }
+            for (let i = 0; i < bufferLength; i++) sum += dataArray[i];
             const average = sum / bufferLength;
 
-            if (average > 8) { 
+            if (average > 10) { 
                 if (!speaking) {
                     speaking = true;
-                    adicionarStatus("🎤 FALANDO DETECTADO!", "active");
+                    logStep("🎤 FALANDO DETECTADO (GRAVANDO...)", "active");
                     if (mediaRecorder.state === 'inactive') {
                         audioChunks = [];
                         mediaRecorder.start();
@@ -133,11 +136,12 @@
                 silenceTimer = setTimeout(() => {
                     if (speaking) {
                         speaking = false;
+                        logStep("⏹ PAUSA DETECTADA (FECHANDO BLOCO)...");
                         if (mediaRecorder.state === 'recording') {
                             mediaRecorder.stop();
                         }
                     }
-                }, 600);
+                }, 800); 
             }
 
             requestAnimationFrame(monitorarVoz);
@@ -151,22 +155,22 @@
 
             document.getElementById('btn-start').style.display = 'block';
             document.getElementById('btn-stop').style.display = 'none';
-            adicionarStatus("OUVINDO DESATIVADO.");
+            logStep("OUVINDO DESATIVADO.");
         }
 
         function adicionarTraducao(texto) {
             const list = document.getElementById('translation-list');
             const li = document.createElement('li');
             li.className = 'translation-item';
-            li.innerText = texto;
+            li.innerText = "🇧🇷 " + texto;
             list.appendChild(li);
             rolarHUD();
         }
 
-        function adicionarStatus(msg, tipo = "item") {
+        function logStep(msg, tipo = "step") {
             const list = document.getElementById('translation-list');
             const li = document.createElement('li');
-            li.className = `translation-item status-${tipo}`;
+            li.className = `status-${tipo}`;
             li.innerText = msg;
             list.appendChild(li);
             rolarHUD();
