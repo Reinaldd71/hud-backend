@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>TRANSLATOR HUD - REALTIME</title>
+    <title>TRANSLATOR HUD</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
         body { background: #000; color: #fff; font-family: 'Segoe UI', sans-serif; height: 100vh; display: flex; flex-direction: column; padding: 10px; }
@@ -14,7 +14,7 @@
         .btn-clear { background: #444; color: white; flex: 0 0 80px; }
         #hud-container { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; border: 1px solid #222; border-radius: 6px; padding: 10px; background: #050505; overflow: hidden; }
         #translation-list { list-style: none; display: flex; flex-direction: column; gap: 10px; width: 100%; }
-        .translation-item { font-size: 22px; font-weight: bold; color: #00ffcc; text-shadow: 0 0 8px rgba(0,255,204,0.4); border-left: 4px solid #00ffcc; padding-left: 10px; font-family: 'Impact', sans-serif; letter-spacing: 0.5px; word-wrap: break-word; }
+        .translation-item { font-size: 22px; font-weight: bold; color: #00ffcc; text-shadow: 0 0 8px rgba(0,255,204,0.4); border-left: 4px solid #00ffcc; padding-left: 10px; font-family: 'Impact', sans-serif; word-wrap: break-word; }
         .status-item { color: #888; border-left-color: #555; font-size: 14px; font-weight: normal; font-family: sans-serif; }
     </style>
 </head>
@@ -34,89 +34,64 @@
 
     <script>
         let socket = null;
-        let audioContext = null;
-        let processor = null;
-        let globalStream = null;
+        let recognition = null;
         let isListening = false;
-        let currentLi = null;
 
-        async function iniciarOuvinte() {
-            adicionarStatus("SOLICITANDO ACESSO AO MICROFONE...");
+        function iniciarOuvinte() {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             
-            try {
-                // Solicita acesso ao microfone primeiro
-                globalStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                
-                adicionarStatus("MICROFONE CONECTADO. CONECTANDO AO SERVIDOR...");
-
-                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                socket = new WebSocket(`${protocol}//${window.location.host}`);
-
-                socket.onopen = async () => {
-                    adicionarStatus("CONECTADO AO STREAMING EM TEMPO REAL!");
-                    document.getElementById('btn-start').style.display = 'none';
-                    document.getElementById('btn-stop').style.display = 'block';
-                    isListening = true;
-
-                    audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
-                    if (audioContext.state === 'suspended') {
-                        await audioContext.resume();
-                    }
-
-                    const source = audioContext.createMediaStreamSource(globalStream);
-                    processor = audioContext.createScriptProcessor(4096, 1, 1);
-
-                    processor.onaudioprocess = (e) => {
-                        if (!isListening || socket.readyState !== WebSocket.OPEN) return;
-                        
-                        const inputData = e.inputBuffer.getChannelData(0);
-                        const pcm16 = new Int16Array(inputData.length);
-                        for (let i = 0; i < inputData.length; i++) {
-                            pcm16[i] = Math.max(-1, Math.min(1, inputData[i])) * 0x7FFF;
-                        }
-                        
-                        const base64Audio = btoa(String.fromCharCode(...new Uint8Array(pcm16.buffer)));
-                        socket.send(JSON.stringify({ type: 'audio', audio: base64Audio }));
-                    };
-
-                    source.connect(processor);
-                    processor.connect(audioContext.destination);
-                };
-
-                socket.onmessage = (event) => {
-                    const data = JSON.parse(event.data);
-                    
-                    if (data.type === 'text_chunk') {
-                        if (!currentLi) {
-                            currentLi = criarElementoHUD();
-                        }
-                        currentLi.innerText += data.text;
-                        rolarHUD();
-                    } else if (data.type === 'text_done') {
-                        currentLi = null;
-                    }
-                };
-
-                socket.onerror = (err) => {
-                    adicionarStatus("ERRO DE CONEXÃO COM O SERVIDOR.");
-                };
-
-                socket.onclose = () => {
-                    if (isListening) pararOuvinte();
-                };
-
-            } catch (err) {
-                alert("Permissão de microfone negada ou erro de acesso: " + err.message);
-                adicionarStatus("ERRO AO ACESSAR MICROFONE.");
+            if (!SpeechRecognition) {
+                alert("Seu navegador não suporta reconhecimento de voz em tempo real. Use o Chrome.");
+                return;
             }
+
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            socket = new WebSocket(`${protocol}//${window.location.host}`);
+
+            socket.onopen = () => {
+                adicionarStatus("SERVIDO CONECTADO! ATIVANDO MICROFONE...");
+                
+                recognition = new SpeechRecognition();
+                recognition.continuous = true;
+                recognition.interimResults = false;
+                recognition.lang = 'en-US'; // Escuta em Inglês
+
+                recognition.onresult = (event) => {
+                    const lastIndex = event.results.length - 1;
+                    const textoIngles = event.results[lastIndex][0].transcript;
+                    
+                    if (socket.readyState === WebSocket.OPEN) {
+                        socket.send(JSON.stringify({ type: 'text', text: textoIngles }));
+                    }
+                };
+
+                recognition.onerror = (e) => {
+                    console.error("Erro voz:", e);
+                };
+
+                recognition.onend = () => {
+                    if (isListening) recognition.start(); // Reconecta automaticamente se cair
+                };
+
+                recognition.start();
+                isListening = true;
+
+                document.getElementById('btn-start').style.display = 'none';
+                document.getElementById('btn-stop').style.display = 'block';
+                adicionarStatus("OUVINDO INGLÊS EM TEMPO REAL...");
+            };
+
+            socket.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                if (data.type === 'translation') {
+                    adicionarTraducao(data.text);
+                }
+            };
         }
 
         function pararOuvinte() {
             isListening = false;
-            
-            if (processor) processor.disconnect();
-            if (audioContext) audioContext.close();
-            if (globalStream) globalStream.getTracks().forEach(t => t.stop());
+            if (recognition) recognition.stop();
             if (socket) socket.close();
 
             document.getElementById('btn-start').style.display = 'block';
@@ -124,23 +99,16 @@
             adicionarStatus("OUVINDO DESATIVADO.");
         }
 
-        function criarElementoHUD() {
+        function adicionarTraducao(texto) {
             const list = document.getElementById('translation-list');
             if (list.children[0] && list.children[0].classList.contains('status-item')) {
                 list.innerHTML = "";
             }
             const li = document.createElement('li');
             li.className = 'translation-item';
+            li.innerText = texto;
             list.appendChild(li);
-            return li;
-        }
-
-        function rolarHUD() {
-            const container = document.getElementById('hud-container');
-            const list = document.getElementById('translation-list');
-            while (list.offsetHeight > (container.clientHeight - 15) && list.children.length > 1) {
-                list.removeChild(list.firstChild);
-            }
+            rolarHUD();
         }
 
         function adicionarStatus(msg) {
@@ -149,6 +117,15 @@
             li.className = 'translation-item status-item';
             li.innerText = msg;
             list.appendChild(li);
+            rolarHUD();
+        }
+
+        function rolarHUD() {
+            const container = document.getElementById('hud-container');
+            const list = document.getElementById('translation-list');
+            while (list.offsetHeight > (container.clientHeight - 15) && list.children.length > 1) {
+                list.removeChild(list.firstChild);
+            }
         }
 
         function limparHUD() { 
