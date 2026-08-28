@@ -26,249 +26,168 @@ app.get('/', (req, res) => {
 });
 
 
-/*
-=========================================================
-PROCESSAMENTO DO ÁUDIO
-=========================================================
-*/
-
-async function processarAudio(ws, audioBase64, sequence) {
-
-    try {
-
-        const audioBuffer = Buffer.from(
-            audioBase64,
-            'base64'
-        );
-
-
-        /*
-        Converte o áudio recebido em arquivo WAV
-        */
-
-        const file = await toFile(
-            audioBuffer,
-            `audio-${sequence}.wav`,
-            {
-                type: 'audio/wav'
-            }
-        );
-
-
-        /*
-        =================================================
-        WHISPER
-        =================================================
-        */
-
-        const transcription =
-            await openai.audio.transcriptions.create({
-
-                file: file,
-
-                model: 'whisper-1',
-
-                language: 'en',
-
-                prompt:
-                    'English multiplayer video game voice chat.'
-
-            });
-
-
-        const textoIngles =
-            transcription.text
-                ? transcription.text.trim()
-                : '';
-
-
-        /*
-        IMPORTANTE:
-
-        Mesmo quando não existe fala,
-        enviamos uma resposta para que a fila
-        do celular nunca fique bloqueada.
-        */
-
-        if (!textoIngles) {
-
-            if (ws.readyState === WebSocket.OPEN) {
-
-                ws.send(JSON.stringify({
-
-                    type: 'empty',
-
-                    sequence: sequence
-
-                }));
-
-            }
-
-            return;
-        }
-
-
-        /*
-        =================================================
-        GPT
-        =================================================
-        */
-
-        const completion =
-            await openai.chat.completions.create({
-
-                model: 'gpt-4o-mini',
-
-                temperature: 0.1,
-
-                messages: [
-
-                    {
-                        role: 'system',
-
-                        content: `
-Você é um tradutor rápido de comunicação entre jogadores de videogame.
-
-Traduza do inglês para português brasileiro.
-
-Seu objetivo é permitir que o jogador entenda rapidamente o que outro jogador está dizendo durante uma partida.
-
-REGRAS:
-
-Responda somente com a tradução.
-
-Não explique.
-
-Não repita o inglês.
-
-Não acrescente informações.
-
-Não invente contexto.
-
-Interprete gírias e expressões de jogadores pelo contexto.
-
-Preserve nomes próprios, nomes de jogadores, itens e termos específicos quando necessário.
-
-Priorize o significado da comunicação.
-
-Se a frase estiver incompleta, traduza somente o que foi entendido.
-
-Se a fala for curta, mantenha a tradução curta.
-
-Não transforme uma fala curta em uma explicação.
-`
-                    },
-
-                    {
-                        role: 'user',
-
-                        content: textoIngles
-
-                    }
-
-                ]
-
-            });
-
-
-        const traducao =
-            completion.choices[0]?.message?.content
-                ?.trim() || '';
-
-
-        /*
-        =================================================
-        ENVIA RESULTADO PARA O CELULAR
-        =================================================
-        */
-
-        if (ws.readyState === WebSocket.OPEN) {
-
-            ws.send(JSON.stringify({
-
-                type: 'translation',
-
-                sequence: sequence,
-
-                original: textoIngles,
-
-                text: traducao
-
-            }));
-
-        }
-
-
-    } catch (error) {
-
-        console.error(
-            `Erro no bloco ${sequence}:`,
-            error
-        );
-
-
-        /*
-        Mesmo em caso de erro,
-        liberamos a sequência.
-        */
-
-        if (ws.readyState === WebSocket.OPEN) {
-
-            ws.send(JSON.stringify({
-
-                type: 'error',
-
-                sequence: sequence,
-
-                text: 'Erro ao processar este bloco.'
-
-            }));
-
-        }
-
-    }
-
-}
-
-
-/*
-=========================================================
-WEBSOCKET
-=========================================================
-*/
-
 wss.on('connection', (ws) => {
 
-    console.log(
-        'Celular conectado ao servidor.'
-    );
-
+    console.log('Celular conectado.');
 
     ws.on('message', async (message) => {
 
         try {
 
-            const data =
-                JSON.parse(message);
+            const data = JSON.parse(message);
+
+            if (
+                data.type !== 'audio_chunk' ||
+                !data.audio
+            ) {
+                return;
+            }
+
+
+            const audioBuffer =
+                Buffer.from(
+                    data.audio,
+                    'base64'
+                );
+
+
+            console.log(
+                `Áudio recebido: ${audioBuffer.length} bytes`
+            );
+
+
+            /*
+            Envia o áudio para o Whisper
+            */
+
+            const file = await toFile(
+                audioBuffer,
+                'audio.webm',
+                {
+                    type: 'audio/webm'
+                }
+            );
+
+
+            const transcription =
+                await openai.audio.transcriptions.create({
+
+                    file: file,
+
+                    model: 'whisper-1',
+
+                    language: 'en',
+
+                    prompt:
+                        'English voice chat between players in a multiplayer video game.'
+
+                });
+
+
+            const textoIngles =
+                transcription.text
+                    ? transcription.text.trim()
+                    : '';
+
+
+            console.log(
+                'Whisper:',
+                textoIngles
+            );
+
+
+            /*
+            Se não houver fala,
+            simplesmente ignora.
+            */
+
+            if (!textoIngles) {
+                return;
+            }
+
+
+            /*
+            Tradução
+            */
+
+            const completion =
+                await openai.chat.completions.create({
+
+                    model: 'gpt-4o-mini',
+
+                    temperature: 0.1,
+
+                    messages: [
+
+                        {
+                            role: 'system',
+
+                            content: `
+Você é um tradutor de voz para jogadores de videogames multiplayer.
+
+Traduza qualquer fala humana em inglês para português brasileiro.
+
+A tradução deve ser rápida, natural e fácil de ler durante uma partida.
+
+Interprete gírias, expressões informais e linguagem de jogadores pelo contexto.
+
+Não faça tradução literal quando isso prejudicar o significado.
+
+Preserve nomes próprios, nomes de jogadores, armas, itens e termos específicos quando apropriado.
+
+Priorize o significado da fala.
+
+Responda SOMENTE com a tradução em português.
+
+Não escreva o texto original.
+
+Não explique.
+
+Não acrescente comentários.
+
+Não escreva "tradução:".
+`
+                        },
+
+                        {
+                            role: 'user',
+
+                            content: textoIngles
+
+                        }
+
+                    ]
+
+                });
+
+
+            const traducao =
+                completion
+                    .choices[0]
+                    ?.message
+                    ?.content
+                    ?.trim();
+
+
+            console.log(
+                'Tradução:',
+                traducao
+            );
 
 
             if (
-                data.type === 'audio_chunk' &&
-                data.audio &&
-                typeof data.sequence === 'number'
+                traducao &&
+                ws.readyState === WebSocket.OPEN
             ) {
 
-                /*
-                NÃO usamos await.
+                ws.send(
+                    JSON.stringify({
 
-                Isso permite que vários blocos
-                sejam processados simultaneamente.
-                */
+                        type: 'translation',
 
-                processarAudio(
-                    ws,
-                    data.audio,
-                    data.sequence
+                        text: traducao
+
+                    })
                 );
 
             }
@@ -276,9 +195,27 @@ wss.on('connection', (ws) => {
         } catch (error) {
 
             console.error(
-                'Erro recebendo áudio:',
+                'ERRO:',
                 error
             );
+
+
+            if (
+                ws.readyState === WebSocket.OPEN
+            ) {
+
+                ws.send(
+                    JSON.stringify({
+
+                        type: 'error',
+
+                        text:
+                            'Erro ao processar áudio.'
+
+                    })
+                );
+
+            }
 
         }
 
@@ -295,12 +232,6 @@ wss.on('connection', (ws) => {
 
 });
 
-
-/*
-=========================================================
-SERVIDOR
-=========================================================
-*/
 
 const PORT =
     process.env.PORT || 3000;
