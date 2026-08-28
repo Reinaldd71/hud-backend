@@ -1,182 +1,822 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
+
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>TRANSLATOR HUD</title>
-    <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
-        body { background: #000; color: #fff; font-family: 'Segoe UI', sans-serif; height: 100vh; display: flex; flex-direction: column; padding: 10px; }
-        #top-bar { display: flex; gap: 6px; margin-bottom: 8px; }
-        button { flex: 1; padding: 14px; font-weight: bold; font-size: 12px; border: none; border-radius: 4px; cursor: pointer; text-transform: uppercase; }
-        .btn-start { background: #28a745; color: white; }
-        .btn-stop { background: #dc3545; color: white; display: none; }
-        .btn-clear { background: #444; color: white; flex: 0 0 80px; }
-        #hud-container { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; border: 1px solid #222; border-radius: 6px; padding: 10px; background: #050505; overflow-y: auto; }
-        #translation-list { list-style: none; display: flex; flex-direction: column; gap: 10px; width: 100%; }
-        .translation-item { font-size: 20px; font-weight: bold; color: #00ffcc; text-shadow: 0 0 8px rgba(0,255,204,0.4); border-left: 4px solid #00ffcc; padding-left: 10px; font-family: 'Impact', sans-serif; word-wrap: break-word; max-height: 160px; overflow: hidden; }
-        .status-item { color: #666; border-left-color: #333; font-size: 13px; font-weight: normal; font-family: sans-serif; }
-    </style>
+
+<meta charset="UTF-8">
+
+<meta name="viewport"
+      content="width=device-width,
+               initial-scale=1.0,
+               maximum-scale=1.0,
+               user-scalable=no">
+
+<title>Translator Diagnostic</title>
+
+<style>
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    user-select: none;
+}
+
+body {
+    background: #000;
+    color: #fff;
+    font-family: Arial, sans-serif;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    padding: 10px;
+}
+
+#top-bar {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+
+button {
+    flex: 1;
+    padding: 14px;
+    border: none;
+    border-radius: 5px;
+    font-weight: bold;
+}
+
+#btn-start {
+    background: #28a745;
+    color: white;
+}
+
+#btn-stop {
+    background: #dc3545;
+    color: white;
+    display: none;
+}
+
+#btn-clear {
+    background: #444;
+    color: white;
+}
+
+#diagnostico {
+
+    background: #111;
+
+    border: 1px solid #333;
+
+    border-radius: 6px;
+
+    padding: 8px;
+
+    margin-bottom: 8px;
+
+    height: 130px;
+
+    overflow-y: auto;
+
+    font-family: monospace;
+
+    font-size: 12px;
+
+    line-height: 1.5;
+
+}
+
+#hud-container {
+
+    flex: 1;
+
+    border: 1px solid #222;
+
+    border-radius: 6px;
+
+    padding: 10px;
+
+    background: #050505;
+
+    overflow: hidden;
+
+    display: flex;
+
+    flex-direction: column;
+
+    justify-content: flex-end;
+
+}
+
+#translation-list {
+
+    list-style: none;
+
+    display: flex;
+
+    flex-direction: column;
+
+    gap: 10px;
+
+}
+
+.translation {
+
+    color: #00ffcc;
+
+    font-size: 22px;
+
+    font-weight: bold;
+
+    line-height: 1.25;
+
+    border-left: 4px solid #00ffcc;
+
+    padding-left: 10px;
+
+    word-wrap: break-word;
+
+}
+
+.status {
+
+    color: #888;
+
+    font-size: 13px;
+
+}
+
+.error {
+
+    color: #ff5555;
+
+}
+
+</style>
+
 </head>
+
 <body>
 
-    <div id="top-bar">
-        <button id="btn-start" class="btn-start" onclick="iniciarOuvinte()">► Iniciar Ouvinte</button>
-        <button id="btn-stop" class="btn-stop" onclick="pararOuvinte()">◼ Parar Ouvinte</button>
-        <button class="btn-clear" onclick="limparHUD()">Limpar</button>
-    </div>
+<div id="top-bar">
 
-    <div id="hud-container">
-        <ul id="translation-list">
-            <li class="translation-item status-item">OUVINDE PRONTO. CLIQUE EM INICIAR.</li>
-        </ul>
-    </div>
+<button id="btn-start"
+        onclick="iniciarOuvinte()">
 
-    <script>
-        let socket = null;
-        let mediaRecorder = null;
-        let audioChunks = [];
-        let audioContext = null;
-        let analyser = null;
-        let microphone = null;
-        let isListening = false;
-        let speaking = false;
-        let silenceTimer = null;
+▶ INICIAR
 
-        async function iniciarOuvinte() {
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                
-                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                socket = new WebSocket(`${protocol}//${window.location.host}`);
+</button>
 
-                socket.onopen = async () => {
-                    document.getElementById('btn-start').style.display = 'none';
-                    document.getElementById('btn-stop').style.display = 'block';
-                    adicionarStatus("OUVINDO EM TEMPO REAL...");
-                    isListening = true;
+<button id="btn-stop"
+        onclick="pararOuvinte()">
 
-                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                    if (audioContext.state === 'suspended') {
-                        await audioContext.resume();
-                    }
+■ PARAR
 
-                    analyser = audioContext.createAnalyser();
-                    microphone = audioContext.createMediaStreamSource(stream);
-                    microphone.connect(analyser);
-                    analyser.fftSize = 512;
+</button>
 
-                    mediaRecorder = new MediaRecorder(stream);
-                    
-                    mediaRecorder.ondataavailable = (e) => {
-                        if (e.data.size > 0) audioChunks.push(e.data);
-                    };
+<button id="btn-clear"
+        onclick="limparTela()">
 
-                    mediaRecorder.onstop = () => {
-                        if (audioChunks.length > 0 && isListening) {
-                            const blob = new Blob(audioChunks, { type: 'audio/webm' });
-                            audioChunks = [];
-                            
-                            const reader = new FileReader();
-                            reader.readAsDataURL(blob);
-                            reader.onloadend = () => {
-                                const base64Audio = reader.result.split(',')[1];
-                                if (socket && socket.readyState === WebSocket.OPEN) {
-                                    socket.send(JSON.stringify({ type: 'audio_chunk', audio: base64Audio }));
-                                }
-                            };
-                        }
-                    };
+LIMPAR
 
-                    monitorarVoz();
-                };
+</button>
 
-                socket.onmessage = (event) => {
-                    const data = JSON.parse(event.data);
-                    if (data.type === 'translation') {
-                        adicionarTraducao(data.text);
-                    }
-                };
+</div>
 
-            } catch (err) {
-                adicionarStatus("ERRO AO ABRIR MICROFONE: " + err.message);
+<div id="diagnostico">
+
+<div>SISTEMA AGUARDANDO...</div>
+
+</div>
+
+<div id="hud-container">
+
+<ul id="translation-list"></ul>
+
+</div>
+
+<script>
+
+let socket = null;
+
+let stream = null;
+
+let audioContext = null;
+
+let analyser = null;
+
+let microphone = null;
+
+let mediaRecorder = null;
+
+let audioChunks = [];
+
+let isListening = false;
+
+let speaking = false;
+
+let silenceTimer = null;
+
+
+/* ============================
+   DIAGNÓSTICO
+============================ */
+
+function diagnostico(texto) {
+
+    const painel =
+        document.getElementById('diagnostico');
+
+    const linha =
+        document.createElement('div');
+
+    linha.innerText =
+        new Date().toLocaleTimeString() +
+        '  ' +
+        texto;
+
+    if (texto.includes('ERRO')) {
+        linha.className = 'error';
+    }
+
+    painel.appendChild(linha);
+
+    painel.scrollTop =
+        painel.scrollHeight;
+
+}
+
+
+/* ============================
+   INICIAR
+============================ */
+
+async function iniciarOuvinte() {
+
+    try {
+
+        diagnostico(
+            '🎤 SOLICITANDO MICROFONE...'
+        );
+
+        stream =
+            await navigator.mediaDevices
+            .getUserMedia({
+                audio: true
+            });
+
+        diagnostico(
+            '🎤 MICROFONE LIBERADO'
+        );
+
+
+        const protocolo =
+            location.protocol === 'https:'
+            ? 'wss:'
+            : 'ws:';
+
+
+        socket =
+            new WebSocket(
+                `${protocolo}//${location.host}`
+            );
+
+
+        socket.onopen = async () => {
+
+            diagnostico(
+                '🔌 WEBSOCKET CONECTADO'
+            );
+
+
+            audioContext =
+                new (
+                    window.AudioContext ||
+                    window.webkitAudioContext
+                )();
+
+
+            if (
+                audioContext.state ===
+                'suspended'
+            ) {
+
+                await audioContext.resume();
+
             }
-        }
 
-        function monitorarVoz() {
-            if (!isListening) return;
 
-            const bufferLength = analyser.frequencyBinCount;
-            const dataArray = new Uint8Array(bufferLength);
-            analyser.getByteFrequencyData(dataArray);
+            diagnostico(
+                '🔊 AUDIOCONTEXT: ' +
+                audioContext.state
+            );
 
-            let sum = 0;
-            for (let i = 0; i < bufferLength; i++) sum += dataArray[i];
-            const average = sum / bufferLength;
 
-            if (average > 10) { 
-                if (!speaking) {
-                    speaking = true;
-                    if (mediaRecorder.state === 'inactive') {
-                        audioChunks = [];
-                        mediaRecorder.start();
+            analyser =
+                audioContext
+                .createAnalyser();
+
+            analyser.fftSize = 512;
+
+
+            microphone =
+                audioContext
+                .createMediaStreamSource(
+                    stream
+                );
+
+
+            microphone.connect(
+                analyser
+            );
+
+
+            mediaRecorder =
+                new MediaRecorder(
+                    stream
+                );
+
+
+            mediaRecorder.ondataavailable =
+                (event) => {
+
+                    if (
+                        event.data.size > 0
+                    ) {
+
+                        audioChunks.push(
+                            event.data
+                        );
+
                     }
+
+                };
+
+
+            mediaRecorder.onstop =
+                enviarGravacao;
+
+
+            isListening = true;
+
+            document
+                .getElementById(
+                    'btn-start'
+                )
+                .style.display =
+                'none';
+
+            document
+                .getElementById(
+                    'btn-stop'
+                )
+                .style.display =
+                'block';
+
+
+            diagnostico(
+                '👂 VAD ATIVO. FALE EM INGLÊS.'
+            );
+
+
+            monitorarVoz();
+
+        };
+
+
+        socket.onmessage =
+            (event) => {
+
+                const data =
+                    JSON.parse(
+                        event.data
+                    );
+
+
+                if (
+                    data.type ===
+                    'diagnostico'
+                ) {
+
+                    diagnostico(
+                        data.text
+                    );
+
                 }
-                clearTimeout(silenceTimer);
-                // Ajustado para 900ms conforme recomendado
-                silenceTimer = setTimeout(() => {
-                    if (speaking) {
-                        speaking = false;
-                        if (mediaRecorder.state === 'recording') {
-                            mediaRecorder.stop();
-                        }
+
+
+                if (
+                    data.type ===
+                    'translation'
+                ) {
+
+                    diagnostico(
+                        '✅ TRADUÇÃO RECEBIDA NO CELULAR'
+                    );
+
+                    adicionarTraducao(
+                        data.text
+                    );
+
+                }
+
+            };
+
+
+        socket.onerror =
+            () => {
+
+                diagnostico(
+                    '❌ ERRO NO WEBSOCKET'
+                );
+
+            };
+
+
+        socket.onclose =
+            () => {
+
+                diagnostico(
+                    '🔌 WEBSOCKET FECHADO'
+                );
+
+            };
+
+
+    } catch (erro) {
+
+        diagnostico(
+            '❌ ERRO MICROFONE: ' +
+            erro.message
+        );
+
+    }
+
+}
+
+
+/* ============================
+   VAD
+============================ */
+
+function monitorarVoz() {
+
+    if (!isListening) {
+        return;
+    }
+
+
+    const bufferLength =
+        analyser.frequencyBinCount;
+
+
+    const dataArray =
+        new Uint8Array(
+            bufferLength
+        );
+
+
+    analyser.getByteFrequencyData(
+        dataArray
+    );
+
+
+    let soma = 0;
+
+
+    for (
+        let i = 0;
+        i < bufferLength;
+        i++
+    ) {
+
+        soma +=
+            dataArray[i];
+
+    }
+
+
+    const media =
+        soma / bufferLength;
+
+
+    if (media > 10) {
+
+        if (!speaking) {
+
+            speaking = true;
+
+            diagnostico(
+                '🎤 FALA DETECTADA'
+            );
+
+
+            if (
+                mediaRecorder.state ===
+                'inactive'
+            ) {
+
+                audioChunks = [];
+
+                mediaRecorder.start();
+
+                diagnostico(
+                    '🔴 GRAVAÇÃO INICIADA'
+                );
+
+            }
+
+        }
+
+
+        clearTimeout(
+            silenceTimer
+        );
+
+
+        silenceTimer =
+            setTimeout(() => {
+
+                if (speaking) {
+
+                    speaking = false;
+
+                    if (
+                        mediaRecorder.state ===
+                        'recording'
+                    ) {
+
+                        mediaRecorder.stop();
+
+                        diagnostico(
+                            '⏹ PAUSA DETECTADA'
+                        );
+
                     }
-                }, 900); 
+
+                }
+
+            }, 900);
+
+    }
+
+
+    requestAnimationFrame(
+        monitorarVoz
+    );
+
+}
+
+
+/* ============================
+   ENVIO
+============================ */
+
+function enviarGravacao() {
+
+    if (
+        audioChunks.length === 0
+    ) {
+
+        diagnostico(
+            '⚠️ GRAVAÇÃO VAZIA'
+        );
+
+        return;
+
+    }
+
+
+    const blob =
+        new Blob(
+            audioChunks,
+            {
+                type: 'audio/webm'
+            }
+        );
+
+
+    audioChunks = [];
+
+
+    diagnostico(
+        '📦 ÁUDIO GERADO: ' +
+        Math.round(
+            blob.size / 1024
+        ) +
+        ' KB'
+    );
+
+
+    const reader =
+        new FileReader();
+
+
+    reader.onloadend =
+        () => {
+
+            const base64 =
+                reader.result
+                .split(',')[1];
+
+
+            if (
+                socket &&
+                socket.readyState ===
+                WebSocket.OPEN
+            ) {
+
+                diagnostico(
+                    '📤 ENVIANDO ÁUDIO AO SERVIDOR'
+                );
+
+
+                socket.send(
+                    JSON.stringify({
+
+                        type:
+                            'audio_chunk',
+
+                        audio:
+                            base64
+
+                    })
+                );
+
+            } else {
+
+                diagnostico(
+                    '❌ WEBSOCKET NÃO ESTÁ ABERTO'
+                );
+
             }
 
-            requestAnimationFrame(monitorarVoz);
+        };
+
+
+    reader.readAsDataURL(
+        blob
+    );
+
+}
+
+
+/* ============================
+   HUD
+============================ */
+
+function adicionarTraducao(
+    texto
+) {
+
+    const lista =
+        document.getElementById(
+            'translation-list'
+        );
+
+
+    const item =
+        document.createElement(
+            'li'
+        );
+
+
+    item.className =
+        'translation';
+
+
+    item.innerText =
+        texto;
+
+
+    lista.appendChild(
+        item
+    );
+
+
+    while (
+        lista.offsetHeight >
+        document
+        .getElementById(
+            'hud-container'
+        )
+        .clientHeight
+    ) {
+
+        if (
+            lista.children.length <= 1
+        ) {
+
+            break;
+
         }
 
-        function pararOuvinte() {
-            isListening = false;
-            if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
-            if (audioContext) audioContext.close();
-            if (socket) socket.close();
+        lista.removeChild(
+            lista.firstChild
+        );
 
-            document.getElementById('btn-start').style.display = 'block';
-            document.getElementById('btn-stop').style.display = 'none';
-            adicionarStatus("OUVINDO DESATIVADO.");
-        }
+    }
 
-        function adicionarTraducao(texto) {
-            const list = document.getElementById('translation-list');
-            if (list.children[0] && list.children[0].classList.contains('status-item')) {
-                list.innerHTML = "";
-            }
-            const li = document.createElement('li');
-            li.className = 'translation-item';
-            li.innerText = texto;
-            list.appendChild(li);
-            
-            const container = document.getElementById('hud-container');
-            container.scrollTop = container.scrollHeight;
-            
-            while (list.children.length > 5) {
-                list.removeChild(list.firstChild);
-            }
-        }
+}
 
-        function adicionarStatus(msg) {
-            const list = document.getElementById('translation-list');
-            const li = document.createElement('li');
-            li.className = 'translation-item status-item';
-            li.innerText = msg;
-            list.appendChild(li);
-        }
 
-        function limparHUD() { 
-            document.getElementById('translation-list').innerHTML = ''; 
-        }
-    </script>
+/* ============================
+   PARAR
+============================ */
+
+function pararOuvinte() {
+
+    isListening = false;
+
+    speaking = false;
+
+
+    clearTimeout(
+        silenceTimer
+    );
+
+
+    if (
+        mediaRecorder &&
+        mediaRecorder.state !==
+        'inactive'
+    ) {
+
+        mediaRecorder.stop();
+
+    }
+
+
+    if (stream) {
+
+        stream
+            .getTracks()
+            .forEach(
+                track =>
+                track.stop()
+            );
+
+    }
+
+
+    if (audioContext) {
+
+        audioContext.close();
+
+    }
+
+
+    if (socket) {
+
+        socket.close();
+
+    }
+
+
+    document
+        .getElementById(
+            'btn-start'
+        )
+        .style.display =
+        'block';
+
+
+    document
+        .getElementById(
+            'btn-stop'
+        )
+        .style.display =
+        'none';
+
+
+    diagnostico(
+        '⏹ SISTEMA PARADO'
+    );
+
+}
+
+
+/* ============================
+   LIMPAR
+============================ */
+
+function limparTela() {
+
+    document
+        .getElementById(
+            'translation-list'
+        )
+        .innerHTML = '';
+
+    document
+        .getElementById(
+            'diagnostico'
+        )
+        .innerHTML = '';
+
+}
+
+</script>
+
 </body>
 </html>
