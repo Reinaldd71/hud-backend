@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>TRANSLATOR HUD - V2 DETECTOR</title>
+    <title>TRANSLATOR HUD - DEBUG</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
         body { background: #000; color: #fff; font-family: 'Segoe UI', sans-serif; height: 100vh; display: flex; flex-direction: column; padding: 10px; }
@@ -17,6 +17,7 @@
         .translation-item { font-size: 22px; font-weight: bold; color: #00ffcc; text-shadow: 0 0 8px rgba(0,255,204,0.4); border-left: 4px solid #00ffcc; padding-left: 10px; font-family: 'Impact', sans-serif; word-wrap: break-word; }
         .status-item { color: #888; border-left-color: #555; font-size: 14px; font-weight: normal; font-family: sans-serif; }
         .status-active { color: #ffcc00; border-left-color: #ffcc00; font-weight: bold; }
+        .status-error { color: #ff4444; border-left-color: #ff4444; font-weight: bold; font-size: 16px; }
     </style>
 </head>
 <body>
@@ -43,7 +44,6 @@
         let isListening = false;
         let speaking = false;
         let silenceTimer = null;
-        let statusElement = null;
 
         async function iniciarOuvinte() {
             try {
@@ -55,10 +55,9 @@
                 socket.onopen = async () => {
                     document.getElementById('btn-start').style.display = 'none';
                     document.getElementById('btn-stop').style.display = 'block';
-                    adicionarStatus("OUVINDO... (AGUARDANDO ÁUDIO EM INGLÊS)");
+                    adicionarStatus("OUVINDO... (AGUARDANDO ÁUDIO ENTRAR)");
                     isListening = true;
 
-                    // Desbloqueia o AudioContext no Android
                     audioContext = new (window.AudioContext || window.webkitAudioContext)();
                     if (audioContext.state === 'suspended') {
                         await audioContext.resume();
@@ -69,7 +68,6 @@
                     microphone.connect(analyser);
                     analyser.fftSize = 512;
 
-                    // Configura o gravador de áudio
                     mediaRecorder = new MediaRecorder(stream);
                     mediaRecorder.ondataavailable = (e) => {
                         if (e.data.size > 0) audioChunks.push(e.data);
@@ -77,7 +75,7 @@
 
                     mediaRecorder.onstop = async () => {
                         if (audioChunks.length > 0 && isListening) {
-                            adicionarStatus("⏳ PROCESSANDO TRADUÇÃO...", true);
+                            adicionarStatus("⏳ PROCESSANDO TRADUÇÃO...", "active");
                             const blob = new Blob(audioChunks, { type: 'audio/webm' });
                             audioChunks = [];
                             
@@ -99,11 +97,13 @@
                     const data = JSON.parse(event.data);
                     if (data.type === 'translation') {
                         adicionarTraducao(data.text);
+                    } else if (data.type === 'error') {
+                        adicionarStatus("❌ ERRO: " + data.text, "error");
                     }
                 };
 
             } catch (err) {
-                alert("Erro ao conectar microfone: " + err.message);
+                adicionarStatus("❌ ERRO NO MICROFONE: " + err.message, "error");
             }
         }
 
@@ -120,11 +120,10 @@
             }
             const average = sum / bufferLength;
 
-            // Limiar de detecção (VAD) ajustado para maior sensibilidade
             if (average > 8) { 
                 if (!speaking) {
                     speaking = true;
-                    adicionarStatus("🎤 FALANDO DETECTADO!", true);
+                    adicionarStatus("🎤 FALANDO DETECTADO!", "active");
                     if (mediaRecorder.state === 'inactive') {
                         audioChunks = [];
                         mediaRecorder.start();
@@ -138,7 +137,7 @@
                             mediaRecorder.stop();
                         }
                     }
-                }, 600); // 600ms de pausa fecha o bloco
+                }, 600);
             }
 
             requestAnimationFrame(monitorarVoz);
@@ -164,10 +163,10 @@
             rolarHUD();
         }
 
-        function adicionarStatus(msg, emDestaque = false) {
+        function adicionarStatus(msg, tipo = "item") {
             const list = document.getElementById('translation-list');
             const li = document.createElement('li');
-            li.className = emDestaque ? 'translation-item status-active' : 'translation-item status-item';
+            li.className = `translation-item status-${tipo}`;
             li.innerText = msg;
             list.appendChild(li);
             rolarHUD();
