@@ -1,12 +1,14 @@
 {
   "name": "hud-backend",
   "version": "1.0.0",
+  "main": "server.js",
   "type": "module",
   "scripts": {
-    "start": "node api/processar-audio.js"
+    "start": "node server.js"
   },
   "dependencies": {
-    "formidable": "^3.5.1",
-    "openai": "^4.28.0"
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "ws": "^8.18.0"
   }
 }
