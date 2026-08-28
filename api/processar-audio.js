@@ -12,6 +12,13 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
+// Lista negra de alucinações comuns do Whisper em silêncio
+const HALLUCINATIONS = [
+  "obrigado por assistir", "thanks for watching", "subtitles", "legenda",
+  "inscreva-se", "subscribe", "boa sorte", "good luck", "você está lendo isso",
+  "you reading this", "curtir", "like and share"
+];
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Método não permitido' });
@@ -30,32 +37,32 @@ export default async function handler(req, res) {
       const newPath = `${oldPath}.webm`;
       fs.renameSync(oldPath, newPath);
 
-      // 1. Transcrição guiada para evitar alucinações de ruído
+      // Transcrição sem inventar conversas
       const transcription = await openai.audio.transcriptions.create({
         file: fs.createReadStream(newPath),
         model: 'whisper-1',
         language: 'en',
-        prompt: 'In-game voice chat, Arc Raiders, FPS tactical calls, player conversation.', // Força o Whisper a focar em termos de jogo
+        temperature: 0.0 // Zero criatividade no Whisper = menor chance de alucinação
       });
 
       if (fs.existsSync(newPath)) fs.unlinkSync(newPath);
 
       const textoIngles = transcription.text.trim();
 
-      // Se a transcrição for muito curta, sem sentido ou apenas barulho, descarta
-      if (!textoIngles || textoIngles.length < 4) {
+      // Se não captou nada de útil ou captou pouquíssimas letras, descarta
+      if (!textoIngles || textoIngles.length < 3) {
         return res.status(200).json({ traducao: "" });
       }
 
-      // 2. Tradução focada em contexto de jogo
+      // Tradução fiel ao que foi falado no jogo
       const completion = await openai.chat.completions.create({
         model: 'gpt-4o-mini',
-        max_tokens: 40,
-        temperature: 0.2,
+        max_tokens: 60,
+        temperature: 0.1,
         messages: [
           {
             role: 'system',
-            content: 'Você é um tradutor de chat de voz de jogos FPS (Arc Raiders). Traduza o áudio em inglês para português brasileiro natural e direto. Se o texto for ruído ou sem sentido, responda APENAS com a palavra "IGNORE".'
+            content: 'Você é um tradutor simultâneo de voz para voz em jogos online. Traduza o áudio em inglês diretamente para o português do Brasil. Traduza exatamente o que o jogador disse de forma natural e sem resumos. Se o texto for apenas ruído ou sem sentido, responda APENAS "VAZIO".'
           },
           {
             role: 'user',
@@ -66,8 +73,16 @@ export default async function handler(req, res) {
 
       let traducao = completion.choices[0].message.content.trim();
 
-      if (traducao.toUpperCase().includes('IGNORE')) {
-        traducao = "";
+      // Filtro 1: Descarta respostas genéricas de ruído
+      if (traducao.toUpperCase() === 'VAZIO') {
+        return res.status(200).json({ traducao: "" });
+      }
+
+      // Filtro 2: Bloqueia alucinações do YouTube
+      const textoLower = traducao.toLowerCase();
+      const temAlucinacao = HALLUCINATIONS.some(h => textoLower.includes(h));
+      if (temAlucinacao) {
+        return res.status(200).json({ traducao: "" });
       }
 
       return res.status(200).json({ 
