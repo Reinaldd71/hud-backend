@@ -41,22 +41,28 @@
         let currentLi = null;
 
         async function iniciarOuvinte() {
+            adicionarStatus("SOLICITANDO ACESSO AO MICROFONE...");
+            
             try {
-                // Detecta se é conexão segura (wss://) ou padrão (ws://)
+                // Solicita acesso ao microfone primeiro
+                globalStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                adicionarStatus("MICROFONE CONECTADO. CONECTANDO AO SERVIDOR...");
+
                 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
                 socket = new WebSocket(`${protocol}//${window.location.host}`);
 
                 socket.onopen = async () => {
-                    adicionarStatus("CONECTADO AO SERVIDOR DE STREAMING EM TEMPO REAL.");
+                    adicionarStatus("CONECTADO AO STREAMING EM TEMPO REAL!");
                     document.getElementById('btn-start').style.display = 'none';
                     document.getElementById('btn-stop').style.display = 'block';
-                    limparHUD();
                     isListening = true;
 
-                    // Captura de áudio contínua em PCM16 para a OpenAI
-                    globalStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
                     audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
-                    
+                    if (audioContext.state === 'suspended') {
+                        await audioContext.resume();
+                    }
+
                     const source = audioContext.createMediaStreamSource(globalStream);
                     processor = audioContext.createScriptProcessor(4096, 1, 1);
 
@@ -69,7 +75,6 @@
                             pcm16[i] = Math.max(-1, Math.min(1, inputData[i])) * 0x7FFF;
                         }
                         
-                        // Transforma o áudio em base64 e envia pelo WebSocket
                         const base64Audio = btoa(String.fromCharCode(...new Uint8Array(pcm16.buffer)));
                         socket.send(JSON.stringify({ type: 'audio', audio: base64Audio }));
                     };
@@ -78,19 +83,22 @@
                     processor.connect(audioContext.destination);
                 };
 
-                // Recebe as palavras sendo traduzidas em tempo real
                 socket.onmessage = (event) => {
                     const data = JSON.parse(event.data);
                     
                     if (data.type === 'text_chunk') {
                         if (!currentLi) {
-                            currentLi = criarElemento HUD();
+                            currentLi = criarElementoHUD();
                         }
                         currentLi.innerText += data.text;
                         rolarHUD();
                     } else if (data.type === 'text_done') {
-                        currentLi = null; // Finaliza a frase atual
+                        currentLi = null;
                     }
+                };
+
+                socket.onerror = (err) => {
+                    adicionarStatus("ERRO DE CONEXÃO COM O SERVIDOR.");
                 };
 
                 socket.onclose = () => {
@@ -98,7 +106,8 @@
                 };
 
             } catch (err) {
-                alert("Erro ao conectar microfone/servidor.");
+                alert("Permissão de microfone negada ou erro de acesso: " + err.message);
+                adicionarStatus("ERRO AO ACESSAR MICROFONE.");
             }
         }
 
