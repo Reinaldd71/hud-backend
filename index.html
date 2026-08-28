@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>TRANSLATOR HUD - V2 FINAL</title>
+    <title>TRANSLATOR HUD</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
         body { background: #000; color: #fff; font-family: 'Segoe UI', sans-serif; height: 100vh; display: flex; flex-direction: column; padding: 10px; }
@@ -12,9 +12,9 @@
         .btn-start { background: #28a745; color: white; }
         .btn-stop { background: #dc3545; color: white; display: none; }
         .btn-clear { background: #444; color: white; flex: 0 0 80px; }
-        #hud-container { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; border: 1px solid #222; border-radius: 6px; padding: 10px; background: #050505; overflow: hidden; }
+        #hud-container { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; border: 1px solid #222; border-radius: 6px; padding: 10px; background: #050505; overflow-y: auto; }
         #translation-list { list-style: none; display: flex; flex-direction: column; gap: 10px; width: 100%; }
-        .translation-item { font-size: 22px; font-weight: bold; color: #00ffcc; text-shadow: 0 0 8px rgba(0,255,204,0.4); border-left: 4px solid #00ffcc; padding-left: 10px; font-family: 'Impact', sans-serif; word-wrap: break-word; }
+        .translation-item { font-size: 20px; font-weight: bold; color: #00ffcc; text-shadow: 0 0 8px rgba(0,255,204,0.4); border-left: 4px solid #00ffcc; padding-left: 10px; font-family: 'Impact', sans-serif; word-wrap: break-word; max-height: 160px; overflow: hidden; }
         .status-item { color: #666; border-left-color: #333; font-size: 13px; font-weight: normal; font-family: sans-serif; }
     </style>
 </head>
@@ -123,6 +123,7 @@
                     }
                 }
                 clearTimeout(silenceTimer);
+                // Ajustado para 900ms conforme recomendado
                 silenceTimer = setTimeout(() => {
                     if (speaking) {
                         speaking = false;
@@ -130,7 +131,7 @@
                             mediaRecorder.stop();
                         }
                     }
-                }, 800); 
+                }, 900); 
             }
 
             requestAnimationFrame(monitorarVoz);
@@ -156,7 +157,13 @@
             li.className = 'translation-item';
             li.innerText = texto;
             list.appendChild(li);
-            rolarHUD();
+            
+            const container = document.getElementById('hud-container');
+            container.scrollTop = container.scrollHeight;
+            
+            while (list.children.length > 5) {
+                list.removeChild(list.firstChild);
+            }
         }
 
         function adicionarStatus(msg) {
@@ -165,15 +172,6 @@
             li.className = 'translation-item status-item';
             li.innerText = msg;
             list.appendChild(li);
-            rolarHUD();
-        }
-
-        function rolarHUD() {
-            const container = document.getElementById('hud-container');
-            const list = document.getElementById('translation-list');
-            while (list.offsetHeight > (container.clientHeight - 15) && list.children.length > 1) {
-                list.removeChild(list.firstChild);
-            }
         }
 
         function limparHUD() { 
