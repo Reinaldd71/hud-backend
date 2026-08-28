@@ -5,13 +5,13 @@
 
 <meta charset="UTF-8">
 
-<meta name="viewport"
-      content="width=device-width,
-               initial-scale=1.0,
-               maximum-scale=1.0,
-               user-scalable=no">
+<meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+>
 
-<title>Translator Diagnostic</title>
+<title>TRANSLATOR HUD</title>
+
 
 <style>
 
@@ -23,72 +23,96 @@
 }
 
 body {
+
     background: #000;
+
     color: #fff;
-    font-family: Arial, sans-serif;
+
+    font-family: 'Segoe UI', sans-serif;
+
     height: 100vh;
+
     display: flex;
+
     flex-direction: column;
+
     padding: 10px;
+
 }
+
 
 #top-bar {
+
     display: flex;
+
     gap: 6px;
+
     margin-bottom: 8px;
+
 }
+
 
 button {
+
     flex: 1;
+
     padding: 14px;
-    border: none;
-    border-radius: 5px;
+
     font-weight: bold;
-}
-
-#btn-start {
-    background: #28a745;
-    color: white;
-}
-
-#btn-stop {
-    background: #dc3545;
-    color: white;
-    display: none;
-}
-
-#btn-clear {
-    background: #444;
-    color: white;
-}
-
-#diagnostico {
-
-    background: #111;
-
-    border: 1px solid #333;
-
-    border-radius: 6px;
-
-    padding: 8px;
-
-    margin-bottom: 8px;
-
-    height: 130px;
-
-    overflow-y: auto;
-
-    font-family: monospace;
 
     font-size: 12px;
 
-    line-height: 1.5;
+    border: none;
+
+    border-radius: 4px;
+
+    cursor: pointer;
+
+    text-transform: uppercase;
 
 }
+
+
+.btn-start {
+
+    background: #28a745;
+
+    color: white;
+
+}
+
+
+.btn-stop {
+
+    background: #dc3545;
+
+    color: white;
+
+    display: none;
+
+}
+
+
+.btn-clear {
+
+    background: #444;
+
+    color: white;
+
+    flex: 0 0 80px;
+
+}
+
 
 #hud-container {
 
     flex: 1;
+
+    display: flex;
+
+    flex-direction: column;
+
+    justify-content: flex-end;
 
     border: 1px solid #222;
 
@@ -100,13 +124,8 @@ button {
 
     overflow: hidden;
 
-    display: flex;
-
-    flex-direction: column;
-
-    justify-content: flex-end;
-
 }
+
 
 #translation-list {
 
@@ -118,37 +137,43 @@ button {
 
     gap: 10px;
 
+    width: 100%;
+
 }
 
-.translation {
 
-    color: #00ffcc;
+.translation-item {
 
     font-size: 22px;
 
     font-weight: bold;
 
-    line-height: 1.25;
+    color: #00ffcc;
+
+    text-shadow: 0 0 8px rgba(0,255,204,0.4);
 
     border-left: 4px solid #00ffcc;
 
     padding-left: 10px;
 
+    font-family: 'Impact', sans-serif;
+
     word-wrap: break-word;
 
 }
 
-.status {
 
-    color: #888;
+.status-item {
+
+    color: #666;
+
+    border-left-color: #333;
 
     font-size: 13px;
 
-}
+    font-weight: normal;
 
-.error {
-
-    color: #ff5555;
+    font-family: sans-serif;
 
 }
 
@@ -156,138 +181,200 @@ button {
 
 </head>
 
+
 <body>
+
 
 <div id="top-bar">
 
-<button id="btn-start"
-        onclick="iniciarOuvinte()">
-
-▶ INICIAR
-
+<button
+    id="btn-start"
+    class="btn-start"
+    onclick="iniciarOuvinte()"
+>
+► INICIAR
 </button>
 
-<button id="btn-stop"
-        onclick="pararOuvinte()">
 
+<button
+    id="btn-stop"
+    class="btn-stop"
+    onclick="pararOuvinte()"
+>
 ■ PARAR
-
 </button>
 
-<button id="btn-clear"
-        onclick="limparTela()">
 
+<button
+    class="btn-clear"
+    onclick="limparHUD()"
+>
 LIMPAR
-
 </button>
 
 </div>
 
-<div id="diagnostico">
-
-<div>SISTEMA AGUARDANDO...</div>
-
-</div>
 
 <div id="hud-container">
 
-<ul id="translation-list"></ul>
+<ul id="translation-list">
+
+<li class="translation-item status-item">
+PRONTO PARA OUVIR...
+</li>
+
+</ul>
 
 </div>
 
+
 <script>
+
+
+/*
+=========================================================
+CONFIGURAÇÃO
+=========================================================
+*/
+
+
+const TAMANHO_BLOCO_MS = 1000;
+
+
+/*
+=========================================================
+VARIÁVEIS
+=========================================================
+*/
+
 
 let socket = null;
 
-let stream = null;
-
 let audioContext = null;
-
-let analyser = null;
 
 let microphone = null;
 
-let mediaRecorder = null;
+let processor = null;
 
-let audioChunks = [];
+let globalStream = null;
 
 let isListening = false;
 
-let speaking = false;
-
-let silenceTimer = null;
+let sequence = 0;
 
 
-/* ============================
-   DIAGNÓSTICO
-============================ */
+/*
+Fila de respostas.
 
-function diagnostico(texto) {
+Serve apenas para garantir que uma tradução
+não apareça antes de outra.
+*/
 
-    const painel =
-        document.getElementById('diagnostico');
+let respostasPendentes = new Map();
 
-    const linha =
-        document.createElement('div');
-
-    linha.innerText =
-        new Date().toLocaleTimeString() +
-        '  ' +
-        texto;
-
-    if (texto.includes('ERRO')) {
-        linha.className = 'error';
-    }
-
-    painel.appendChild(linha);
-
-    painel.scrollTop =
-        painel.scrollHeight;
-
-}
+let proximaSequencia = 1;
 
 
-/* ============================
-   INICIAR
-============================ */
+/*
+Buffer de áudio PCM
+*/
+
+let audioBuffer = [];
+
+let sampleRate = 44100;
+
+
+/*
+=========================================================
+INICIAR
+=========================================================
+*/
+
 
 async function iniciarOuvinte() {
 
     try {
 
-        diagnostico(
-            '🎤 SOLICITANDO MICROFONE...'
+
+        limparHUD();
+
+
+        adicionarStatus(
+            "SOLICITANDO MICROFONE..."
         );
 
-        stream =
-            await navigator.mediaDevices
-            .getUserMedia({
-                audio: true
+
+        /*
+        Microfone
+        */
+
+        globalStream =
+            await navigator.mediaDevices.getUserMedia({
+
+                audio: {
+
+                    echoCancellation: false,
+
+                    noiseSuppression: false,
+
+                    autoGainControl: true
+
+                }
+
             });
 
-        diagnostico(
-            '🎤 MICROFONE LIBERADO'
+
+        adicionarStatus(
+            "MICROFONE CONECTADO."
         );
 
 
-        const protocolo =
-            location.protocol === 'https:'
-            ? 'wss:'
-            : 'ws:';
+        /*
+        WebSocket
+        */
+
+        const protocol =
+            window.location.protocol === 'https:'
+                ? 'wss:'
+                : 'ws:';
 
 
         socket =
             new WebSocket(
-                `${protocolo}//${location.host}`
+                `${protocol}//${window.location.host}`
             );
 
 
         socket.onopen = async () => {
 
-            diagnostico(
-                '🔌 WEBSOCKET CONECTADO'
+
+            isListening = true;
+
+            sequence = 0;
+
+            proximaSequencia = 1;
+
+            respostasPendentes.clear();
+
+
+            document
+                .getElementById('btn-start')
+                .style.display = 'none';
+
+
+            document
+                .getElementById('btn-stop')
+                .style.display = 'block';
+
+
+            adicionarStatus(
+                "OUVINDO EM TEMPO REAL..."
             );
 
+
+            /*
+            AudioContext
+            */
 
             audioContext =
                 new (
@@ -297,8 +384,7 @@ async function iniciarOuvinte() {
 
 
             if (
-                audioContext.state ===
-                'suspended'
+                audioContext.state === 'suspended'
             ) {
 
                 await audioContext.resume();
@@ -306,413 +392,598 @@ async function iniciarOuvinte() {
             }
 
 
-            diagnostico(
-                '🔊 AUDIOCONTEXT: ' +
-                audioContext.state
-            );
+            sampleRate =
+                audioContext.sampleRate;
 
 
-            analyser =
-                audioContext
-                .createAnalyser();
-
-            analyser.fftSize = 512;
-
+            /*
+            Entrada do microfone
+            */
 
             microphone =
-                audioContext
-                .createMediaStreamSource(
-                    stream
+                audioContext.createMediaStreamSource(
+                    globalStream
                 );
 
 
-            microphone.connect(
-                analyser
-            );
+            /*
+            ScriptProcessor é utilizado aqui
+            para manter o protótipo simples
+            e compatível com o navegador móvel.
+            */
 
-
-            mediaRecorder =
-                new MediaRecorder(
-                    stream
+            processor =
+                audioContext.createScriptProcessor(
+                    4096,
+                    1,
+                    1
                 );
 
 
-            mediaRecorder.ondataavailable =
-                (event) => {
+            microphone.connect(processor);
 
-                    if (
-                        event.data.size > 0
-                    ) {
-
-                        audioChunks.push(
-                            event.data
-                        );
-
-                    }
-
-                };
-
-
-            mediaRecorder.onstop =
-                enviarGravacao;
-
-
-            isListening = true;
-
-            document
-                .getElementById(
-                    'btn-start'
-                )
-                .style.display =
-                'none';
-
-            document
-                .getElementById(
-                    'btn-stop'
-                )
-                .style.display =
-                'block';
-
-
-            diagnostico(
-                '👂 VAD ATIVO. FALE EM INGLÊS.'
+            processor.connect(
+                audioContext.destination
             );
 
 
-            monitorarVoz();
+            processor.onaudioprocess =
+                capturarAudio;
+
+
+            adicionarStatus(
+                "TRADUÇÃO ATIVA."
+            );
 
         };
 
 
-        socket.onmessage =
-            (event) => {
+        /*
+        Recebe respostas do servidor
+        */
+
+        socket.onmessage = (event) => {
+
+
+            try {
 
                 const data =
-                    JSON.parse(
-                        event.data
-                    );
+                    JSON.parse(event.data);
 
 
                 if (
-                    data.type ===
-                    'diagnostico'
+                    data.type === 'translation'
                 ) {
 
-                    diagnostico(
+                    respostasPendentes.set(
+                        data.sequence,
                         data.text
                     );
+
+
+                    processarFila();
 
                 }
 
 
-                if (
-                    data.type ===
-                    'translation'
-                ) {
+            } catch (error) {
 
-                    diagnostico(
-                        '✅ TRADUÇÃO RECEBIDA NO CELULAR'
-                    );
-
-                    adicionarTraducao(
-                        data.text
-                    );
-
-                }
-
-            };
-
-
-        socket.onerror =
-            () => {
-
-                diagnostico(
-                    '❌ ERRO NO WEBSOCKET'
+                console.error(
+                    "Erro recebendo tradução:",
+                    error
                 );
 
-            };
+            }
+
+        };
 
 
-        socket.onclose =
-            () => {
+        socket.onerror = () => {
 
-                diagnostico(
-                    '🔌 WEBSOCKET FECHADO'
+            adicionarStatus(
+                "ERRO NA CONEXÃO."
+            );
+
+        };
+
+
+        socket.onclose = () => {
+
+            if (isListening) {
+
+                adicionarStatus(
+                    "CONEXÃO ENCERRADA."
                 );
 
-            };
+            }
+
+        };
 
 
-    } catch (erro) {
+    } catch (error) {
 
-        diagnostico(
-            '❌ ERRO MICROFONE: ' +
-            erro.message
+
+        console.error(error);
+
+
+        adicionarStatus(
+            "ERRO: " + error.message
         );
+
 
     }
 
 }
 
 
-/* ============================
-   VAD
-============================ */
+/*
+=========================================================
+CAPTURA CONTÍNUA
+=========================================================
+*/
 
-function monitorarVoz() {
+
+function capturarAudio(event) {
+
 
     if (!isListening) {
         return;
     }
 
 
-    const bufferLength =
-        analyser.frequencyBinCount;
+    const input =
+        event.inputBuffer.getChannelData(0);
 
 
-    const dataArray =
-        new Uint8Array(
-            bufferLength
+    /*
+    Copia o áudio para não depender
+    do buffer interno do navegador.
+    */
+
+    for (
+        let i = 0;
+        i < input.length;
+        i++
+    ) {
+
+        audioBuffer.push(input[i]);
+
+    }
+
+
+    /*
+    Quando atingir aproximadamente
+    1 segundo, envia o bloco.
+    */
+
+    const quantidadeNecessaria =
+        sampleRate *
+        (TAMANHO_BLOCO_MS / 1000);
+
+
+    if (
+        audioBuffer.length >=
+        quantidadeNecessaria
+    ) {
+
+
+        const bloco =
+            audioBuffer.splice(
+                0,
+                quantidadeNecessaria
+            );
+
+
+        enviarBloco(
+            bloco,
+            sequence++
+        );
+
+    }
+
+}
+
+
+/*
+=========================================================
+CONVERTE PCM PARA WAV
+=========================================================
+*/
+
+
+function criarWav(
+    samples,
+    sampleRate
+) {
+
+
+    const buffer =
+        new ArrayBuffer(
+            44 + samples.length * 2
         );
 
 
-    analyser.getByteFrequencyData(
-        dataArray
+    const view =
+        new DataView(buffer);
+
+
+    escreverTexto(
+        view,
+        0,
+        'RIFF'
     );
 
 
-    let soma = 0;
+    view.setUint32(
+        4,
+        36 + samples.length * 2,
+        true
+    );
+
+
+    escreverTexto(
+        view,
+        8,
+        'WAVE'
+    );
+
+
+    escreverTexto(
+        view,
+        12,
+        'fmt '
+    );
+
+
+    view.setUint32(
+        16,
+        16,
+        true
+    );
+
+
+    view.setUint16(
+        20,
+        1,
+        true
+    );
+
+
+    view.setUint16(
+        22,
+        1,
+        true
+    );
+
+
+    view.setUint32(
+        24,
+        sampleRate,
+        true
+    );
+
+
+    view.setUint32(
+        28,
+        sampleRate * 2,
+        true
+    );
+
+
+    view.setUint16(
+        32,
+        2,
+        true
+    );
+
+
+    view.setUint16(
+        34,
+        16,
+        true
+    );
+
+
+    escreverTexto(
+        view,
+        36,
+        'data'
+    );
+
+
+    view.setUint32(
+        40,
+        samples.length * 2,
+        true
+    );
+
+
+    let offset = 44;
 
 
     for (
         let i = 0;
-        i < bufferLength;
+        i < samples.length;
         i++
     ) {
 
-        soma +=
-            dataArray[i];
 
-    }
-
-
-    const media =
-        soma / bufferLength;
-
-
-    if (media > 10) {
-
-        if (!speaking) {
-
-            speaking = true;
-
-            diagnostico(
-                '🎤 FALA DETECTADA'
+        let valor =
+            Math.max(
+                -1,
+                Math.min(
+                    1,
+                    samples[i]
+                )
             );
 
 
-            if (
-                mediaRecorder.state ===
-                'inactive'
-            ) {
-
-                audioChunks = [];
-
-                mediaRecorder.start();
-
-                diagnostico(
-                    '🔴 GRAVAÇÃO INICIADA'
-                );
-
-            }
-
-        }
+        valor =
+            valor < 0
+                ? valor * 0x8000
+                : valor * 0x7FFF;
 
 
-        clearTimeout(
-            silenceTimer
+        view.setInt16(
+            offset,
+            valor,
+            true
         );
 
 
-        silenceTimer =
-            setTimeout(() => {
-
-                if (speaking) {
-
-                    speaking = false;
-
-                    if (
-                        mediaRecorder.state ===
-                        'recording'
-                    ) {
-
-                        mediaRecorder.stop();
-
-                        diagnostico(
-                            '⏹ PAUSA DETECTADA'
-                        );
-
-                    }
-
-                }
-
-            }, 900);
+        offset += 2;
 
     }
 
 
-    requestAnimationFrame(
-        monitorarVoz
+    return new Blob(
+        [buffer],
+        {
+            type: 'audio/wav'
+        }
     );
 
 }
 
 
-/* ============================
-   ENVIO
-============================ */
+function escreverTexto(
+    view,
+    offset,
+    texto
+) {
 
-function enviarGravacao() {
 
-    if (
-        audioChunks.length === 0
+    for (
+        let i = 0;
+        i < texto.length;
+        i++
     ) {
 
-        diagnostico(
-            '⚠️ GRAVAÇÃO VAZIA'
+        view.setUint8(
+            offset + i,
+            texto.charCodeAt(i)
         );
+
+    }
+
+}
+
+
+/*
+=========================================================
+ENVIA BLOCO
+=========================================================
+*/
+
+
+async function enviarBloco(
+    samples,
+    numero
+) {
+
+
+    if (
+        !socket ||
+        socket.readyState !==
+        WebSocket.OPEN
+    ) {
 
         return;
 
     }
 
 
-    const blob =
-        new Blob(
-            audioChunks,
-            {
-                type: 'audio/webm'
-            }
+    const wav =
+        criarWav(
+            samples,
+            sampleRate
         );
-
-
-    audioChunks = [];
-
-
-    diagnostico(
-        '📦 ÁUDIO GERADO: ' +
-        Math.round(
-            blob.size / 1024
-        ) +
-        ' KB'
-    );
 
 
     const reader =
         new FileReader();
 
 
-    reader.onloadend =
-        () => {
+    reader.onloadend = () => {
 
-            const base64 =
-                reader.result
+
+        const base64 =
+            reader.result
                 .split(',')[1];
 
 
-            if (
-                socket &&
-                socket.readyState ===
-                WebSocket.OPEN
-            ) {
+        socket.send(
+            JSON.stringify({
 
-                diagnostico(
-                    '📤 ENVIANDO ÁUDIO AO SERVIDOR'
-                );
+                type: 'audio_chunk',
 
+                sequence: numero,
 
-                socket.send(
-                    JSON.stringify({
+                audio: base64
 
-                        type:
-                            'audio_chunk',
+            })
+        );
 
-                        audio:
-                            base64
-
-                    })
-                );
-
-            } else {
-
-                diagnostico(
-                    '❌ WEBSOCKET NÃO ESTÁ ABERTO'
-                );
-
-            }
-
-        };
+    };
 
 
-    reader.readAsDataURL(
-        blob
-    );
+    reader.readAsDataURL(wav);
 
 }
 
 
-/* ============================
-   HUD
-============================ */
+/*
+=========================================================
+FILA DE TRADUÇÃO
+=========================================================
+*/
+
+
+function processarFila() {
+
+
+    while (
+        respostasPendentes.has(
+            proximaSequencia
+        )
+    ) {
+
+
+        const texto =
+            respostasPendentes.get(
+                proximaSequencia
+            );
+
+
+        respostasPendentes.delete(
+            proximaSequencia
+        );
+
+
+        if (
+            texto &&
+            texto.trim()
+        ) {
+
+            adicionarTraducao(
+                texto
+            );
+
+        }
+
+
+        proximaSequencia++;
+
+    }
+
+}
+
+
+/*
+=========================================================
+HUD
+=========================================================
+*/
+
 
 function adicionarTraducao(
     texto
 ) {
 
-    const lista =
+
+    const list =
         document.getElementById(
             'translation-list'
         );
 
 
-    const item =
-        document.createElement(
-            'li'
-        );
+    if (
+        list.children[0] &&
+        list.children[0]
+            .classList
+            .contains('status-item')
+    ) {
+
+        list.innerHTML = "";
+
+    }
 
 
-    item.className =
-        'translation';
+    const li =
+        document.createElement('li');
 
 
-    item.innerText =
+    li.className =
+        'translation-item';
+
+
+    li.innerText =
         texto;
 
 
-    lista.appendChild(
-        item
-    );
+    list.appendChild(li);
+
+
+    limitarHUD();
+
+}
+
+
+function adicionarStatus(
+    texto
+) {
+
+
+    const list =
+        document.getElementById(
+            'translation-list'
+        );
+
+
+    const li =
+        document.createElement('li');
+
+
+    li.className =
+        'translation-item status-item';
+
+
+    li.innerText =
+        texto;
+
+
+    list.appendChild(li);
+
+
+    limitarHUD();
+
+}
+
+
+function limitarHUD() {
+
+
+    const container =
+        document.getElementById(
+            'hud-container'
+        );
+
+
+    const list =
+        document.getElementById(
+            'translation-list'
+        );
 
 
     while (
-        lista.offsetHeight >
-        document
-        .getElementById(
-            'hud-container'
-        )
-        .clientHeight
+        list.offsetHeight >
+        container.clientHeight - 15
+        &&
+        list.children.length > 1
     ) {
 
-        if (
-            lista.children.length <= 1
-        ) {
-
-            break;
-
-        }
-
-        lista.removeChild(
-            lista.firstChild
+        list.removeChild(
+            list.firstChild
         );
 
     }
@@ -720,41 +991,33 @@ function adicionarTraducao(
 }
 
 
-/* ============================
-   PARAR
-============================ */
+/*
+=========================================================
+PARAR
+=========================================================
+*/
+
 
 function pararOuvinte() {
 
+
     isListening = false;
 
-    speaking = false;
 
+    if (processor) {
 
-    clearTimeout(
-        silenceTimer
-    );
+        processor.disconnect();
 
-
-    if (
-        mediaRecorder &&
-        mediaRecorder.state !==
-        'inactive'
-    ) {
-
-        mediaRecorder.stop();
+        processor = null;
 
     }
 
 
-    if (stream) {
+    if (microphone) {
 
-        stream
-            .getTracks()
-            .forEach(
-                track =>
-                track.stop()
-            );
+        microphone.disconnect();
+
+        microphone = null;
 
     }
 
@@ -763,6 +1026,22 @@ function pararOuvinte() {
 
         audioContext.close();
 
+        audioContext = null;
+
+    }
+
+
+    if (globalStream) {
+
+        globalStream
+            .getTracks()
+            .forEach(
+                track => track.stop()
+            );
+
+
+        globalStream = null;
+
     }
 
 
@@ -770,47 +1049,43 @@ function pararOuvinte() {
 
         socket.close();
 
+        socket = null;
+
     }
 
 
-    document
-        .getElementById(
-            'btn-start'
-        )
-        .style.display =
-        'block';
+    audioBuffer = [];
 
 
     document
-        .getElementById(
-            'btn-stop'
-        )
-        .style.display =
-        'none';
+        .getElementById('btn-start')
+        .style.display = 'block';
 
 
-    diagnostico(
-        '⏹ SISTEMA PARADO'
+    document
+        .getElementById('btn-stop')
+        .style.display = 'none';
+
+
+    adicionarStatus(
+        "OUVINDO DESATIVADO."
     );
 
 }
 
 
-/* ============================
-   LIMPAR
-============================ */
+/*
+=========================================================
+LIMPAR
+=========================================================
+*/
 
-function limparTela() {
+
+function limparHUD() {
 
     document
         .getElementById(
             'translation-list'
-        )
-        .innerHTML = '';
-
-    document
-        .getElementById(
-            'diagnostico'
         )
         .innerHTML = '';
 
@@ -819,4 +1094,5 @@ function limparTela() {
 </script>
 
 </body>
+
 </html>
