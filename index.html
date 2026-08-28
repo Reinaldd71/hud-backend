@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>TRANSLATOR HUD - V2</title>
+    <title>TRANSLATOR HUD - V2 DETECTOR</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
         body { background: #000; color: #fff; font-family: 'Segoe UI', sans-serif; height: 100vh; display: flex; flex-direction: column; padding: 10px; }
@@ -16,6 +16,7 @@
         #translation-list { list-style: none; display: flex; flex-direction: column; gap: 10px; width: 100%; }
         .translation-item { font-size: 22px; font-weight: bold; color: #00ffcc; text-shadow: 0 0 8px rgba(0,255,204,0.4); border-left: 4px solid #00ffcc; padding-left: 10px; font-family: 'Impact', sans-serif; word-wrap: break-word; }
         .status-item { color: #888; border-left-color: #555; font-size: 14px; font-weight: normal; font-family: sans-serif; }
+        .status-active { color: #ffcc00; border-left-color: #ffcc00; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -42,6 +43,7 @@
         let isListening = false;
         let speaking = false;
         let silenceTimer = null;
+        let statusElement = null;
 
         async function iniciarOuvinte() {
             try {
@@ -50,13 +52,24 @@
                 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
                 socket = new WebSocket(`${protocol}//${window.location.host}`);
 
-                socket.onopen = () => {
+                socket.onopen = async () => {
                     document.getElementById('btn-start').style.display = 'none';
                     document.getElementById('btn-stop').style.display = 'block';
-                    adicionarStatus("OUVINDO (DETECÇÃO DE FALA ATIVA)...");
+                    adicionarStatus("OUVINDO... (AGUARDANDO ÁUDIO EM INGLÊS)");
                     isListening = true;
 
-                    // Configura o gravador
+                    // Desbloqueia o AudioContext no Android
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    if (audioContext.state === 'suspended') {
+                        await audioContext.resume();
+                    }
+
+                    analyser = audioContext.createAnalyser();
+                    microphone = audioContext.createMediaStreamSource(stream);
+                    microphone.connect(analyser);
+                    analyser.fftSize = 512;
+
+                    // Configura o gravador de áudio
                     mediaRecorder = new MediaRecorder(stream);
                     mediaRecorder.ondataavailable = (e) => {
                         if (e.data.size > 0) audioChunks.push(e.data);
@@ -64,6 +77,7 @@
 
                     mediaRecorder.onstop = async () => {
                         if (audioChunks.length > 0 && isListening) {
+                            adicionarStatus("⏳ PROCESSANDO TRADUÇÃO...", true);
                             const blob = new Blob(audioChunks, { type: 'audio/webm' });
                             audioChunks = [];
                             
@@ -78,13 +92,6 @@
                         }
                     };
 
-                    // Configura o VAD por volume e frequência
-                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                    analyser = audioContext.createAnalyser();
-                    microphone = audioContext.createMediaStreamSource(stream);
-                    microphone.connect(analyser);
-                    analyser.fftSize = 512;
-
                     monitorarVoz();
                 };
 
@@ -96,7 +103,7 @@
                 };
 
             } catch (err) {
-                alert("Erro ao acessar microfone.");
+                alert("Erro ao conectar microfone: " + err.message);
             }
         }
 
@@ -113,10 +120,11 @@
             }
             const average = sum / bufferLength;
 
-            // Limiar de detecção de som (VAD)
-            if (average > 15) { 
+            // Limiar de detecção (VAD) ajustado para maior sensibilidade
+            if (average > 8) { 
                 if (!speaking) {
                     speaking = true;
+                    adicionarStatus("🎤 FALANDO DETECTADO!", true);
                     if (mediaRecorder.state === 'inactive') {
                         audioChunks = [];
                         mediaRecorder.start();
@@ -130,7 +138,7 @@
                             mediaRecorder.stop();
                         }
                     }
-                }, 700); // 700ms de silêncio marca a pausa natural
+                }, 600); // 600ms de pausa fecha o bloco
             }
 
             requestAnimationFrame(monitorarVoz);
@@ -149,9 +157,6 @@
 
         function adicionarTraducao(texto) {
             const list = document.getElementById('translation-list');
-            if (list.children[0] && list.children[0].classList.contains('status-item')) {
-                list.innerHTML = "";
-            }
             const li = document.createElement('li');
             li.className = 'translation-item';
             li.innerText = texto;
@@ -159,10 +164,10 @@
             rolarHUD();
         }
 
-        function adicionarStatus(msg) {
+        function adicionarStatus(msg, emDestaque = false) {
             const list = document.getElementById('translation-list');
             const li = document.createElement('li');
-            li.className = 'translation-item status-item';
+            li.className = emDestaque ? 'translation-item status-active' : 'translation-item status-item';
             li.innerText = msg;
             list.appendChild(li);
             rolarHUD();
