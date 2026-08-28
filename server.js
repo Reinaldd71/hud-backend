@@ -5,6 +5,8 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import OpenAI from 'openai';
+import fs from 'fs';
+import tmp from 'tmp';
 
 dotenv.config();
 
@@ -24,38 +26,56 @@ app.get('/', (req, res) => {
 });
 
 wss.on('connection', (ws) => {
-  console.log('Celular conectado ao servidor!');
+  console.log('Cliente conectado ao VAD HUD');
 
   ws.on('message', async (message) => {
     try {
       const data = JSON.parse(message);
-      
-      if (data.type === 'text' && data.text.trim()) {
-        const completion = await openai.chat.completions.create({
-          model: 'gpt-4o-mini',
-          temperature: 0.1,
-          messages: [
-            {
-              role: 'system',
-              content: 'Você é um tradutor simultâneo para Arc Raiders. Traduza o texto em inglês diretamente para português do Brasil. Use termos corretos de games (loot = saque, blueprint = projeto de arma, keycard = cartão de acesso). Seja direto e sem firulas.'
-            },
-            {
-              role: 'user',
-              content: data.text
-            }
-          ]
+
+      if (data.type === 'audio_chunk' && data.audio) {
+        const audioBuffer = Buffer.from(data.audio, 'base64');
+
+        // Cria arquivo temporário para enviar à OpenAI
+        const tempFile = tmp.fileSync({ postfix: '.webm' });
+        fs.writeFileSync(tempFile.name, audioBuffer);
+
+        // 1. Transcrição do áudio enviado após a pausa natural
+        const transcription = await openai.audio.transcriptions.create({
+          file: fs.createReadStream(tempFile.name),
+          model: 'whisper-1',
+          language: 'en'
         });
 
-        const traducao = completion.choices[0].message.content.trim();
-        ws.send(JSON.stringify({ type: 'translation', original: data.text, text: traducao }));
+        tempFile.remove();
+
+        const textoIngles = transcription.text ? transcription.text.trim() : '';
+
+        // Filtra alucinações de silêncio do Whisper
+        if (textoIngles.length > 2 && !textoIngles.toLowerCase().includes('subtitles')) {
+          // 2. Tradução direta do contexto sem regras rígidas
+          const completion = await openai.chat.completions.create({
+            model: 'gpt-4o-mini',
+            temperature: 0.2,
+            messages: [
+              {
+                role: 'system',
+                content: 'Você é um tradutor simultâneo. Traduza a fala em inglês a seguir diretamente para o português do Brasil. Mantenha o tom natural e direto.'
+              },
+              { role: 'user', content: textoIngles }
+            ]
+          });
+
+          const traducao = completion.choices[0].message.content.trim();
+          ws.send(JSON.stringify({ type: 'translation', text: traducao }));
+        }
       }
     } catch (e) {
-      console.error("Erro ao traduzir:", e);
+      console.error("Erro no processamento do bloco:", e.message);
     }
   });
 });
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log(`Servidor rodando na porta ${PORT}`);
+  console.log(`Servidor VAD rodando na porta ${PORT}`);
 });
