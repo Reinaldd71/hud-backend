@@ -28,7 +28,7 @@ app.get('/', (req, res) => {
 
 /*
 =========================================================
-PROCESSAMENTO DE UM BLOCO DE ÁUDIO
+PROCESSAMENTO DO ÁUDIO
 =========================================================
 */
 
@@ -36,7 +36,15 @@ async function processarAudio(ws, audioBase64, sequence) {
 
     try {
 
-        const audioBuffer = Buffer.from(audioBase64, 'base64');
+        const audioBuffer = Buffer.from(
+            audioBase64,
+            'base64'
+        );
+
+
+        /*
+        Converte o áudio recebido em arquivo WAV
+        */
 
         const file = await toFile(
             audioBuffer,
@@ -48,108 +56,130 @@ async function processarAudio(ws, audioBase64, sequence) {
 
 
         /*
-        =====================================================
-        1. TRANSCRIÇÃO
-        =====================================================
+        =================================================
+        WHISPER
+        =================================================
         */
 
-        const transcription = await openai.audio.transcriptions.create({
-            file: file,
-            model: 'whisper-1',
-            language: 'en',
-            prompt: 'English multiplayer game voice chat.'
-        });
+        const transcription =
+            await openai.audio.transcriptions.create({
 
-        const textoIngles = transcription.text
-            ? transcription.text.trim()
-            : '';
+                file: file,
+
+                model: 'whisper-1',
+
+                language: 'en',
+
+                prompt:
+                    'English multiplayer video game voice chat.'
+
+            });
 
 
-        if (!textoIngles || textoIngles.length < 2) {
+        const textoIngles =
+            transcription.text
+                ? transcription.text.trim()
+                : '';
+
+
+        /*
+        IMPORTANTE:
+
+        Mesmo quando não existe fala,
+        enviamos uma resposta para que a fila
+        do celular nunca fique bloqueada.
+        */
+
+        if (!textoIngles) {
+
+            if (ws.readyState === WebSocket.OPEN) {
+
+                ws.send(JSON.stringify({
+
+                    type: 'empty',
+
+                    sequence: sequence
+
+                }));
+
+            }
+
             return;
         }
 
 
         /*
-        =====================================================
-        ENVIA STATUS PARA O CELULAR
-        =====================================================
+        =================================================
+        GPT
+        =================================================
         */
 
-        if (ws.readyState === WebSocket.OPEN) {
+        const completion =
+            await openai.chat.completions.create({
 
-            ws.send(JSON.stringify({
-                type: 'transcription',
-                sequence: sequence,
-                text: textoIngles
-            }));
+                model: 'gpt-4o-mini',
 
-        }
+                temperature: 0.1,
 
+                messages: [
 
-        /*
-        =====================================================
-        2. TRADUÇÃO
-        =====================================================
-        */
+                    {
+                        role: 'system',
 
-        const completion = await openai.chat.completions.create({
-
-            model: 'gpt-4o-mini',
-
-            temperature: 0.1,
-
-            messages: [
-
-                {
-                    role: 'system',
-
-                    content: `
-Você é um tradutor extremamente rápido de comunicação entre jogadores de videogame.
+                        content: `
+Você é um tradutor rápido de comunicação entre jogadores de videogame.
 
 Traduza do inglês para português brasileiro.
 
-OBJETIVO PRINCIPAL:
-Entregar rapidamente o significado que um jogador precisa entender durante uma partida.
+Seu objetivo é permitir que o jogador entenda rapidamente o que outro jogador está dizendo durante uma partida.
 
 REGRAS:
 
-1. Responda somente com a tradução.
-2. Não explique nada.
-3. Não repita o inglês.
-4. Preserve nomes próprios e nomes de itens quando fizer sentido.
-5. Interprete gírias de jogadores pelo contexto.
-6. Não faça uma tradução excessivamente literal quando isso prejudicar o significado.
-7. Seja curto e natural.
-8. Não invente informações que não estejam na fala.
-9. Se a frase estiver incompleta, traduza somente o que foi entendido.
-10. Não transforme uma fala curta em uma frase longa.
+Responda somente com a tradução.
+
+Não explique.
+
+Não repita o inglês.
+
+Não acrescente informações.
+
+Não invente contexto.
+
+Interprete gírias e expressões de jogadores pelo contexto.
+
+Preserve nomes próprios, nomes de jogadores, itens e termos específicos quando necessário.
+
+Priorize o significado da comunicação.
+
+Se a frase estiver incompleta, traduza somente o que foi entendido.
+
+Se a fala for curta, mantenha a tradução curta.
+
+Não transforme uma fala curta em uma explicação.
 `
-                },
+                    },
 
-                {
-                    role: 'user',
-                    content: textoIngles
-                }
+                    {
+                        role: 'user',
 
-            ]
+                        content: textoIngles
 
-        });
+                    }
+
+                ]
+
+            });
 
 
         const traducao =
-            completion.choices[0]?.message?.content?.trim();
-
-
-        if (!traducao) {
-            return;
-        }
+            completion.choices[0]?.message?.content
+                ?.trim() || '';
 
 
         /*
-        =====================================================
-        DEVOLVE A TRADUÇÃO
-        =====================================================
+        =================================================
+        ENVIA RESULTADO PARA O CELULAR
+        =================================================
         */
 
         if (ws.readyState === WebSocket.OPEN) {
@@ -176,6 +206,12 @@ REGRAS:
             error
         );
 
+
+        /*
+        Mesmo em caso de erro,
+        liberamos a sequência.
+        */
+
         if (ws.readyState === WebSocket.OPEN) {
 
             ws.send(JSON.stringify({
@@ -184,7 +220,7 @@ REGRAS:
 
                 sequence: sequence,
 
-                text: 'Erro ao processar áudio.'
+                text: 'Erro ao processar este bloco.'
 
             }));
 
@@ -203,14 +239,17 @@ WEBSOCKET
 
 wss.on('connection', (ws) => {
 
-    console.log('Celular conectado.');
+    console.log(
+        'Celular conectado ao servidor.'
+    );
 
 
     ws.on('message', async (message) => {
 
         try {
 
-            const data = JSON.parse(message);
+            const data =
+                JSON.parse(message);
 
 
             if (
@@ -220,10 +259,10 @@ wss.on('connection', (ws) => {
             ) {
 
                 /*
-                NÃO usamos await aqui.
+                NÃO usamos await.
 
-                Cada bloco pode ser processado
-                independentemente dos outros.
+                Isso permite que vários blocos
+                sejam processados simultaneamente.
                 */
 
                 processarAudio(
@@ -237,7 +276,7 @@ wss.on('connection', (ws) => {
         } catch (error) {
 
             console.error(
-                'Erro recebendo mensagem:',
+                'Erro recebendo áudio:',
                 error
             );
 
@@ -248,7 +287,9 @@ wss.on('connection', (ws) => {
 
     ws.on('close', () => {
 
-        console.log('Celular desconectado.');
+        console.log(
+            'Celular desconectado.'
+        );
 
     });
 
@@ -261,12 +302,17 @@ SERVIDOR
 =========================================================
 */
 
-const PORT = process.env.PORT || 3000;
+const PORT =
+    process.env.PORT || 3000;
 
-server.listen(PORT, () => {
 
-    console.log(
-        `Servidor rodando na porta ${PORT}`
-    );
+server.listen(
+    PORT,
+    () => {
 
-});
+        console.log(
+            `Servidor rodando na porta ${PORT}`
+        );
+
+    }
+);
