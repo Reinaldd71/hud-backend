@@ -23,17 +23,23 @@ app.get('/', (req, res) => {
 wss.on('connection', (ws) => {
   console.log('Cliente conectado ao HUD');
 
-  // Abre conexão em tempo real com a OpenAI Realtime API
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    console.error("ERRO: OPENAI_API_KEY não foi configurada nas variáveis de ambiente!");
+    ws.send(JSON.stringify({ type: 'text_chunk', text: ' [ERRO: Chave OpenAI ausente no servidor] ' }));
+    return;
+  }
+
   const url = "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01";
   const openAiWs = new WebSocket(url, {
     headers: {
-      "Authorization": "Bearer " + process.env.OPENAI_API_KEY,
+      "Authorization": "Bearer " + apiKey,
       "OpenAI-Beta": "realtime=v1",
     },
   });
 
   openAiWs.on('open', () => {
-    // Configura as instruções do tradutor em tempo real
+    console.log('Conectado à OpenAI Realtime API');
     const sessionUpdate = {
       type: "session.update",
       session: {
@@ -52,7 +58,6 @@ wss.on('connection', (ws) => {
     openAiWs.send(JSON.stringify(sessionUpdate));
   });
 
-  // Recebe mensagens de áudio da tela do celular e repassa para a OpenAI
   ws.on('message', (message) => {
     try {
       const data = JSON.parse(message);
@@ -67,11 +72,9 @@ wss.on('connection', (ws) => {
     }
   });
 
-  // Recebe a tradução em tempo real da OpenAI e envia para o celular
   openAiWs.on('message', (data) => {
     try {
       const response = JSON.parse(data.toString());
-      
       if (response.type === 'response.text.delta' && response.delta) {
         ws.send(JSON.stringify({ type: 'text_chunk', text: response.delta }));
       } else if (response.type === 'response.text.done') {
@@ -80,6 +83,10 @@ wss.on('connection', (ws) => {
     } catch (e) {
       console.error("Erro na resposta da OpenAI:", e);
     }
+  });
+
+  openAiWs.on('error', (err) => {
+    console.error("Erro WebSocket OpenAI:", err);
   });
 
   ws.on('close', () => {
