@@ -4,9 +4,7 @@ import http from 'http';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import OpenAI from 'openai';
-import fs from 'fs';
-import tmp from 'tmp';
+import OpenAI, { toFile } from 'openai';
 
 dotenv.config();
 
@@ -33,65 +31,46 @@ wss.on('connection', (ws) => {
       const data = JSON.parse(message);
 
       if (data.type === 'audio_chunk' && data.audio) {
+        ws.send(JSON.stringify({ type: 'step', text: '📥 SERVER: Áudio recebido no Render!' }));
+
         const audioBuffer = Buffer.from(data.audio, 'base64');
+        const file = await toFile(audioBuffer, 'input.webm', { type: 'audio/webm' });
 
-        // Cria o arquivo temporário
-        const tempFile = tmp.fileSync({ postfix: '.webm' });
-        fs.writeFileSync(tempFile.name, audioBuffer);
+        ws.send(JSON.stringify({ type: 'step', text: '🤖 WHISPER: Enviando áudio para transcrição...' }));
 
-        // 1. Transcrição via Whisper
-        let transcription;
-        try {
-          transcription = await openai.audio.transcriptions.create({
-            file: fs.createReadStream(tempFile.name),
-            model: 'whisper-1',
-            language: 'en'
-          });
-        } catch (whisperErr) {
-          tempFile.remove();
-          throw new Error("Whisper OpenAI: " + whisperErr.message);
-        }
+        // 1. Transcrição
+        const transcription = await openai.audio.transcriptions.create({
+          file: file,
+          model: 'whisper-1',
+          language: 'en'
+        });
 
-        tempFile.remove();
         const textoIngles = transcription.text ? transcription.text.trim() : '';
+        ws.send(JSON.stringify({ type: 'step', text: `🎧 INGLÊS: "${textoIngles || 'Nenhuma palavra detectada'}"` }));
 
-        if (!textoIngles) {
-          ws.send(JSON.stringify({ type: 'error', text: 'Sem áudio legível reconhecido' }));
-          return;
-        }
+        if (!textoIngles) return;
 
-        // 2. Tradução via GPT-4o-mini
-        let completion;
-        try {
-          completion = await openai.chat.completions.create({
-            model: 'gpt-4o-mini',
-            temperature: 0.2,
-            messages: [
-              {
-                role: 'system',
-                content: 'Traduza o texto em inglês a seguir diretamente para o português do Brasil de forma natural.'
-              },
-              { role: 'user', content: textoIngles }
-            ]
-          });
-        } catch (gptErr) {
-          throw new Error("GPT OpenAI: " + gptErr.message);
-        }
+        // 2. Tradução
+        ws.send(JSON.stringify({ type: 'step', text: '🇧🇷 GPT: Traduzindo para português...' }));
+
+        const completion = await openai.chat.completions.create({
+          model: 'gpt-4o-mini',
+          temperature: 0.2,
+          messages: [
+            { role: 'system', content: 'Traduza o texto em inglês para o português do Brasil.' },
+            { role: 'user', content: textoIngles }
+          ]
+        });
 
         const traducao = completion.choices[0]?.message?.content?.trim();
         if (traducao) {
           ws.send(JSON.stringify({ type: 'translation', text: traducao }));
-        } else {
-          ws.send(JSON.stringify({ type: 'error', text: 'Resposta vazia da OpenAI' }));
         }
       }
     } catch (e) {
-      console.error("ERRO COMPLETO:", e);
+      console.error("ERRO NO SERVIDOR:", e);
       if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-          type: 'error',
-          text: e.message || 'Erro desconhecido no servidor'
-        }));
+        ws.send(JSON.stringify({ type: 'error', text: 'ERRO SERVIDOR: ' + e.message }));
       }
     }
   });
