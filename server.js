@@ -26,23 +26,160 @@ app.get('/', (req, res) => {
 });
 
 
+/*
+=========================================================
+FILTRO DE TRANSCRIÇÕES PROBLEMÁTICAS
+=========================================================
+*/
+
+function ehTranscricaoRuim(texto) {
+
+    if (!texto) return true;
+
+    const t = texto
+        .trim()
+        .toLowerCase();
+
+    if (t.length < 2) return true;
+
+
+    /*
+    Frases muito características de vídeos,
+    que não fazem sentido em comunicação de jogadores.
+    */
+
+    const frasesSuspeitas = [
+
+        'thanks for watching',
+        'thank you for watching',
+        'thanks for watching this video',
+        'thank you for watching this video',
+        'see you in the next video',
+        'see you next time',
+        'subscribe to my channel',
+        'like and subscribe',
+        'don\'t forget to subscribe',
+        'welcome to my channel',
+        'this is the end of the video',
+        'that\'s the end of the video',
+        'special thanks',
+        'thanks for watching guys',
+        'have a great day',
+        'have a good day',
+        'thanks for listening'
+
+    ];
+
+
+    for (const frase of frasesSuspeitas) {
+
+        if (t.includes(frase)) {
+
+            console.log(
+                'Transcrição descartada:',
+                texto
+            );
+
+            return true;
+
+        }
+
+    }
+
+
+    /*
+    Detecta repetição exagerada.
+    Exemplo:
+    what what what what what
+    */
+
+    const palavras =
+        t
+            .replace(/[.,!?;:"']/g, '')
+            .split(/\s+/)
+            .filter(Boolean);
+
+
+    if (palavras.length >= 5) {
+
+        let repeticoes = 0;
+
+        for (
+            let i = 1;
+            i < palavras.length;
+            i++
+        ) {
+
+            if (
+                palavras[i] ===
+                palavras[i - 1]
+            ) {
+
+                repeticoes++;
+
+            }
+
+        }
+
+
+        if (
+            repeticoes >=
+            palavras.length * 0.5
+        ) {
+
+            console.log(
+                'Transcrição repetitiva descartada:',
+                texto
+            );
+
+            return true;
+
+        }
+
+    }
+
+
+    return false;
+
+}
+
+
+/*
+=========================================================
+CONEXÃO DO CELULAR
+=========================================================
+*/
+
 wss.on('connection', (ws) => {
 
-    console.log('Celular conectado.');
+    console.log(
+        'Celular conectado.'
+    );
+
 
     ws.on('message', async (message) => {
 
         try {
 
-            const data = JSON.parse(message);
+            const data =
+                JSON.parse(message);
+
 
             if (
                 data.type !== 'audio_chunk' ||
                 !data.audio
             ) {
+
                 return;
+
             }
 
+
+            /*
+            =================================================
+            RECEBE ÁUDIO
+            =================================================
+            */
 
             const audioBuffer =
                 Buffer.from(
@@ -57,16 +194,19 @@ wss.on('connection', (ws) => {
 
 
             /*
-            Envia o áudio para o Whisper
+            =================================================
+            WHISPER
+            =================================================
             */
 
-            const file = await toFile(
-                audioBuffer,
-                'audio.webm',
-                {
-                    type: 'audio/webm'
-                }
-            );
+            const file =
+                await toFile(
+                    audioBuffer,
+                    'audio.webm',
+                    {
+                        type: 'audio/webm'
+                    }
+                );
 
 
             const transcription =
@@ -76,10 +216,7 @@ wss.on('connection', (ws) => {
 
                     model: 'whisper-1',
 
-                    language: 'en',
-
-                    prompt:
-                        'English voice chat between players in a multiplayer video game.'
+                    language: 'en'
 
                 });
 
@@ -91,23 +228,32 @@ wss.on('connection', (ws) => {
 
 
             console.log(
-                'Whisper:',
+                'WHISPER:',
                 textoIngles
             );
 
 
             /*
-            Se não houver fala,
-            simplesmente ignora.
+            =================================================
+            DESCARTA ÁUDIO SEM FALA
+            =================================================
             */
 
-            if (!textoIngles) {
+            if (
+                ehTranscricaoRuim(
+                    textoIngles
+                )
+            ) {
+
                 return;
+
             }
 
 
             /*
-            Tradução
+            =================================================
+            GPT
+            =================================================
             */
 
             const completion =
@@ -123,21 +269,23 @@ wss.on('connection', (ws) => {
                             role: 'system',
 
                             content: `
-Você é um tradutor de voz para jogadores de videogames multiplayer.
+Você traduz comunicação de voz entre jogadores de videogames multiplayer.
 
 Traduza qualquer fala humana em inglês para português brasileiro.
 
-A tradução deve ser rápida, natural e fácil de ler durante uma partida.
+A fala pode conter gírias, abreviações, linguagem informal, erros de pronúncia ou termos usados por jogadores.
 
-Interprete gírias, expressões informais e linguagem de jogadores pelo contexto.
+Interprete o significado pelo contexto.
 
-Não faça tradução literal quando isso prejudicar o significado.
+Não faça uma tradução excessivamente literal quando isso prejudicar o significado da comunicação.
 
-Preserve nomes próprios, nomes de jogadores, armas, itens e termos específicos quando apropriado.
+Mantenha nomes próprios, nomes de jogadores, armas, equipamentos, itens e termos específicos do jogo quando apropriado.
 
-Priorize o significado da fala.
+Se uma palavra ou expressão parecer ser um nome próprio ou termo específico de videogame, não invente uma tradução.
 
-Responda SOMENTE com a tradução em português.
+Se a frase estiver incompleta, traduza somente o significado que estiver claramente presente.
+
+Responda SOMENTE com a tradução em português brasileiro.
 
 Não escreva o texto original.
 
@@ -146,13 +294,16 @@ Não explique.
 Não acrescente comentários.
 
 Não escreva "tradução:".
+
+Não invente informações que não estejam presentes na fala.
 `
                         },
 
                         {
                             role: 'user',
 
-                            content: textoIngles
+                            content:
+                                textoIngles
 
                         }
 
@@ -170,24 +321,35 @@ Não escreva "tradução:".
 
 
             console.log(
-                'Tradução:',
+                'GPT:',
                 traducao
             );
 
 
+            /*
+            =================================================
+            ENVIA PARA O CELULAR
+            =================================================
+            */
+
             if (
                 traducao &&
-                ws.readyState === WebSocket.OPEN
+                ws.readyState ===
+                WebSocket.OPEN
             ) {
 
                 ws.send(
+
                     JSON.stringify({
 
-                        type: 'translation',
+                        type:
+                            'translation',
 
-                        text: traducao
+                        text:
+                            traducao
 
                     })
+
                 );
 
             }
@@ -195,24 +357,28 @@ Não escreva "tradução:".
         } catch (error) {
 
             console.error(
-                'ERRO:',
+                'ERRO NO SERVIDOR:',
                 error
             );
 
 
             if (
-                ws.readyState === WebSocket.OPEN
+                ws.readyState ===
+                WebSocket.OPEN
             ) {
 
                 ws.send(
+
                     JSON.stringify({
 
-                        type: 'error',
+                        type:
+                            'error',
 
                         text:
                             'Erro ao processar áudio.'
 
                     })
+
                 );
 
             }
@@ -232,6 +398,12 @@ Não escreva "tradução:".
 
 });
 
+
+/*
+=========================================================
+SERVIDOR
+=========================================================
+*/
 
 const PORT =
     process.env.PORT || 3000;
